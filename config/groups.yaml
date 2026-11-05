@@ -5,25 +5,131 @@
 # Yang tidak cocok dengan kelompok mana pun masuk "Lainnya".
 # ============================================================
 cogs_comp:
-  "Biaya produksi & operasional": [pertambangan, pemrosesan, produksi, perbaikan, pemeliharaan, overhead, energi, bahan bakar, kontraktor]
-  "Bahan baku & material": [material, bahan baku, pembelian, persediaan]
-  "Royalti & iuran": [royalti, iuran, retribusi]
-  "Logistik & angkutan": [angkut, bongkar, pengiriman, freight, distribusi, logistik]
-  "Depresiasi & amortisasi": [depresiasi, amortisasi, penyusutan]
-  "Tenaga kerja": [gaji, upah, karyawan, tenaga kerja]
+  Biaya produksi & operasional:
+  - pertambangan
+  - pemrosesan
+  - produksi
+  - perbaikan
+  - pemeliharaan
+  - overhead
+  - energi
+  - bahan bakar
+  - kontraktor
+  - jaringan
+  - interkoneksi
+  - frekuensi
+  - sewa menara
+  - pemeliharaan jaringan
+  - panen
+  - pemupukan
+  - perawatan tanaman
+  - pengolahan
+  - pabrikasi
+  - jasa kontraktor
+  - sewa alat
+  - subkontraktor
+  Bahan baku & material:
+  - material
+  - bahan baku
+  - pembelian
+  - persediaan
+  - barang dagang
+  - bahan kemasan
+  - kemasan
+  - tandan buah
+  - tbs
+  - pakan
+  - bibit
+  - obat-obatan
+  Royalti & iuran:
+  - royalti
+  - iuran
+  - retribusi
+  Logistik & angkutan:
+  - angkut
+  - bongkar
+  - pengiriman
+  - freight
+  - distribusi
+  - logistik
+  - transportasi
+  - ekspedisi
+  - pelabuhan
+  - bahan bakar kapal
+  Depresiasi & amortisasi:
+  - depresiasi
+  - amortisasi
+  - penyusutan
+  - deplesi
+  Tenaga kerja:
+  - gaji
+  - upah
+  - karyawan
+  - tenaga kerja
+  Biaya tanah & bangunan (properti):
+  - tanah
+  - bangunan
+  - pengembangan
+  - konstruksi
+  - rumah
+  - apartemen
+  - kavling
 core_inc_comp:
-  "Margin pembiayaan & kredit": [murabahah, istishna, ijarah, qardh, kredit, pinjaman yang diberikan, loan]
-  "Bagi hasil": [musyarakah, mudharabah, bagi hasil]
-  "Penempatan & surat berharga": [penempatan, surat berharga, obligasi, sukuk, giro pada]
+  Margin pembiayaan & kredit:
+  - murabahah
+  - istishna
+  - ijarah
+  - qardh
+  - kredit
+  - pinjaman yang diberikan
+  - loan
+  Bagi hasil:
+  - musyarakah
+  - mudharabah
+  - bagi hasil
+  Penempatan & surat berharga:
+  - penempatan
+  - surat berharga
+  - obligasi
+  - sukuk
+  - giro pada
 core_cost_comp:
-  "Deposito": [deposito, time deposit]
-  "Tabungan": [tabungan, saving]
-  "Giro": [giro, current account]
-  "Pinjaman & surat berharga": [pinjaman, sukuk, obligasi, investasi, sertifikat, musytarakah]
+  Deposito:
+  - deposito
+  - time deposit
+  Tabungan:
+  - tabungan
+  - saving
+  Giro:
+  - giro
+  - current account
+  Pinjaman & surat berharga:
+  - pinjaman
+  - sukuk
+  - obligasi
+  - investasi
+  - sertifikat
+  - musytarakah
 noncore_comp:
-  "Fee & komisi": [provisi, komisi, fee, jasa]
-  "Pemulihan aset dihapusbukukan": [penerimaan kembali, hapus]
-  "Treasury & selisih kurs": [kurs, trading, surat berharga, perdagangan]
+  Fee & komisi:
+  - provisi
+  - komisi
+  - fee
+  - jasa
+  Pemulihan aset dihapusbukukan:
+  - penerimaan kembali
+  - hapus
+  Treasury & selisih kurs:
+  - kurs
+  - trading
+  - surat berharga
+  - perdagangan
 opex_comp:
-  "Tenaga kerja": [gaji, karyawan, tenaga kerja, tunjangan]
-  "Umum & administrasi": [umum, administrasi]
+  Tenaga kerja:
+  - gaji
+  - karyawan
+  - tenaga kerja
+  - tunjangan
+  Umum & administrasi:
+  - umum
+  - administrasi

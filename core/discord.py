@@ -50,9 +50,11 @@ def _post(payload: dict, files: list[Path] | None = None) -> None:
 
 
 def status(text: str, level: str = "info") -> None:
-    """Pesan status sistem: kecil, satu baris, berwarna."""
-    log.info("[status:%s] %s", level, text)
-    if not cfg.DISCORD.get("status_messages", True):
+    """Pesan status sistem. Selalu dicatat di log Drive; dikirim ke Discord hanya bila
+    discord.status_messages = true di config/settings.yaml (bawaan: false)."""
+    from core import activity
+    activity.add(text, level)
+    if not cfg.DISCORD.get("status_messages", False):
         return
     icon = {"info": "ℹ️", "warn": "⚠️", "error": "⛔", "ok": "✅"}.get(level, "ℹ️")
     _post({"embeds": [{"description": f"{icon} {text}"[:4000], "color": COLORS.get(level)}]})

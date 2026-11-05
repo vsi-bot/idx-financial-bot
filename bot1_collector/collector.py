@@ -65,6 +65,10 @@ def process_inbox(st, state, wl) -> set[str]:
             items.append((f, inbox, None))
     if not items:
         return changed
+    limit = cfg.SETTINGS.get("inbox", {}).get("max_files_per_run", 60)
+    if len(items) > limit:
+        discord.status(f"Inbox berisi {len(items)} file; {limit} diproses sekarang, sisanya di putaran berikutnya.")
+        items = items[:limit]
     start = cfg.DATA["start_year"]
     for f, parent, hint in items:
         local = cfg.WORK_DIR / f"inbox_{re.sub(r'[^A-Za-z0-9._-]', '_', f['name'])}"
@@ -109,9 +113,13 @@ def in_season(today: date) -> bool:
 def should_scrape(state) -> bool:
     if not cfg.SCRAPER["enabled"]:
         return False
-    if cfg.FORCE_SCRAPE or in_season(date.today()) or not state["last_scrape"]:
+    if cfg.FORCE_SCRAPE or not state["last_scrape"]:
         return True
     last = datetime.fromisoformat(state["last_scrape"])
+    if datetime.now(timezone.utc) - last < timedelta(minutes=cfg.SCRAPER.get("min_interval_minutes", 60)):
+        return False
+    if in_season(date.today()):
+        return True
     return datetime.now(timezone.utc) - last >= timedelta(hours=cfg.SCRAPER["offseason_interval_hours"])
 
 

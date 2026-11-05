@@ -181,3 +181,15 @@ Jika secret `BRIDGE_URL` diisi, bot otomatis memakai jembatan Apps Script (`apps
 alih-alih Google Drive API. Langkah 3, Langkah 4, serta secret `GOOGLE_TOKEN` dan `DRIVE_ROOT_FOLDER_ID` tidak diperlukan.
 Secret yang dibutuhkan: `BRIDGE_URL`, `BRIDGE_KEY`, `DISCORD_WEBHOOK_URL`. Batas ukuran file lewat jembatan: 35 MB.
 Setiap kali kode `DriveBridge.gs` diubah, buat versi deployment baru (Deploy → Manage deployments → Edit → New version).
+
+
+## Perubahan versi 2 (ringkas)
+
+- Discord hanya menerima foto tabel + narasi (tanpa lampiran Excel, tanpa pesan status).
+- Pesan status kini dicatat di Drive: `_Sistem/log/TANGGAL/`.
+- Jadwal: setiap 15 menit pukul 07.00–17.30 WIB. Inbox adalah jalur utama; scraper IDX nonaktif (aktifkan di `config/settings.yaml`).
+- Pembanding tahun lalu selalu basis restated; laba inti (continuing) dipisah dari operasi yang dihentikan.
+- Validasi otomatis PASS/WARN/FAIL (toleransi 3%); tabel FAIL tidak dikirim. Riwayat ada di sheet **Validasi** pada Excel emiten.
+- Banyak emiten dihitung paralel, lalu dikirim berurutan per emiten.
+- Laporan yang dulu terkirim tanpa data kuartalan otomatis dikirim ulang satu kali saat data lengkap.
+- Kamus pos laporan lintas sektor: `config/line_items.yaml`. Regression test: `tests/run_regression.py`.

@@ -7,6 +7,8 @@ class Calc:
     def __init__(self, store: dict, period: Period):
         self.s, self.p = store, period
         self.P = store["periods"]
+        self.basis: dict[str, str] = {}     # basis kolom kuartal tahun lalu per pos: restated / as_reported / not_comparable
+        self.restated = False
 
     # ------------------------------------------------ pengambilan nilai dasar
     def _own(self, p: Period, key):
@@ -21,21 +23,52 @@ class Calc:
         a, b = self._own(p, key), self._from_next(p, key)
         return (b if b is not None else a) if prefer_next else (a if a is not None else b)
 
+    def restatement_gap(self, key):
+        """Selisih relatif antara angka tahun lalu versi restated (laporan terbaru) dan versi asli."""
+        new, old = self.cum_py(key), self._own(self.p.same_last_year(), key)
+        if new is None or old is None or not old:
+            return None
+        return abs(new - old) / abs(old)
+
     def cum_py(self, key):
         """Kumulatif periode sama tahun lalu: pakai kolom pembanding laporan terbaru (sudah disajikan ulang)."""
         e = self.P.get(self.p.key)
         v = None if e is None else e["prior"].get(key)
         return v if v is not None else self.cum(self.p.same_last_year(), key)
 
-    def q(self, p: Period, key):
-        """Angka kuartal murni = kumulatif periode ini - kumulatif periode sebelumnya (tahun yang sama)."""
+    def _vintage(self, p: Period, key, vintage: str):
+        """Nilai kumulatif dari SATU basis laporan: 'own' (laporan periode itu) atau 'next' (pembanding laporan tahun berikutnya)."""
+        return self._own(p, key) if vintage == "own" else self._from_next(p, key)
+
+    def _q_strict(self, p: Period, key, vintage: str):
+        """Kuartal murni dari satu basis laporan saja (tidak mencampur angka lama & restated)."""
         if p.idx == 0:
-            return self.cum(p, key)
-        prev = p.prev()
-        for nxt in (False, True):
-            a, b = self.cum(p, key, nxt), self.cum(prev, key, nxt)
-            if a is not None and b is not None:
-                return a - b
+            return self._vintage(p, key, vintage)
+        a, b = self._vintage(p, key, vintage), self._vintage(p.prev(), key, vintage)
+        return None if a is None or b is None else a - b
+
+    def q(self, p: Period, key):
+        """Kuartal murni. Untuk tahun berjalan: basis laporan sendiri. Untuk tahun lalu: wajib basis restated
+        (pembanding laporan terbaru); angka lama hanya dipakai jika terbukti tidak ada penyajian kembali."""
+        if p.year >= self.p.year:
+            for v in ("own", "next"):
+                x = self._q_strict(p, key, v)
+                if x is not None:
+                    return x
+            return None
+        x = self._q_strict(p, key, "next")
+        if x is not None:
+            self.basis[key] = self.basis.get(key, "restated")
+            return x
+        old = self._q_strict(p, key, "own")
+        if old is None:
+            return None
+        restated_cum, old_cum = self.cum_py(key), self._own(Period(p.year, self.p.idx), key)
+        if restated_cum is None or old_cum is None or abs(restated_cum - old_cum) <= 0.005 * max(abs(restated_cum), 1):
+            self.basis[key] = "as_reported"
+            return old
+        self.basis[key] = "not_comparable"        # ada penyajian kembali, angka lama tidak dipakai
+        self.restated = True
         return None
 
     def bs(self, p: Period, key):
@@ -132,11 +165,26 @@ def build(store: dict, period: Period) -> dict:
     tpl = store["template"]
     rows, m = [], {}
 
+    from core.fmt import unit_info
+    SC = unit_info(store["currency"])[0]
+    DEC = 0 if store["currency"] == "IDR" else 1
+    tol = _cfg.SETTINGS.get("validation", {}).get("rounding_note_pct", 3.0) / 100
+
+    def rnd(v):
+        return None if v is None else round(v / SC, DEC) * SC
+
     def add(label, key=None, vals=None, kind="main", fmt="num", ratio_of=None):
         vals = vals if vals is not None else c.flow(key)
-        g = growths(vals) if fmt == "num" else [None, None, None]
+        notes = []
+        if fmt == "num":
+            # pertumbuhan dihitung dari angka yang DITAMPILKAN (dibulatkan) agar cocok dengan tabel
+            g, g_full = growths([rnd(v) for v in vals]), growths(vals)
+            notes = [i for i, (a, b) in enumerate(zip(g, g_full))
+                     if a is not None and b is not None and abs(a - b) > max(tol * abs(b), 0.0005)]
+        else:
+            g = [None, None, None]
         rows.append({"label": label, "key": key, "kind": kind, "fmt": fmt, "vals": vals, "growth": g,
-                     "ratio_of": ratio_of})
+                     "ratio_of": ratio_of, "round_note": notes, "basis": c.basis.get(key) if key else None})
         if key:
             m[key] = {"vals": vals, "growth": g, "label": label}
         return vals
@@ -191,16 +239,28 @@ def build(store: dict, period: Period) -> dict:
         add("Non-operating Items (net)", "non_operating")
         add("Profit Before Tax", "pbt")
         add("Tax Expense", "tax")
-        add("Net Profit", "net_profit")
+        has_disc = any(v for v in c.flow("np_disc") if v)
+        if has_disc:
+            add("Profit from Continuing Operations", "np_cont")
+            add("Profit from Discontinued Operations", "np_disc")
+            if any(v for v in c.flow("np_nci") if v):
+                add("Net Profit (total)", "np_total")
+        add("Net Profit attributable to parent" if has_disc else "Net Profit", "net_profit")
+        if has_disc:
+            add("Core Net Profit (excl. discontinued)", "net_profit_core")
+            m["net_profit_reported"] = m["net_profit"]
+            m["net_profit"] = m["net_profit_core"]        # rasio & narasi memakai laba inti
+        NPK = "net_profit_core" if has_disc else "net_profit"
         if c.keys_with("seg_profit"):
             rows.append({"label": f"Segment Profit - {unit}", "kind": "section"})
             components("seg_profit", None, other="Lainnya & eliminasi")
 
         rows.append({"label": "Key Ratios (%)", "kind": "section"})
         rev = m["revenue"]["vals"]
-        for lbl, k in (("Gross Profit Margin (GPM)", "gross_profit"), ("Operating Profit Margin (OPM)", "operating_profit"),
-                       ("Net Profit Margin (NPM)", "net_profit")):
-            add(lbl, f"r_{k}", ratio_vals(m[k]["vals"], rev), kind="ratio", fmt="pct", ratio_of=(k, "revenue"))
+        for lbl, k, src in (("Gross Profit Margin (GPM)", "gross_profit", "gross_profit"),
+                            ("Operating Profit Margin (OPM)", "operating_profit", "operating_profit"),
+                            ("Net Profit Margin (NPM)", "net_profit", NPK)):
+            add(lbl, f"r_{k}", ratio_vals(m[k]["vals"], rev), kind="ratio", fmt="pct", ratio_of=(src, "revenue"))
         add("Effective Tax Rate", "r_etr", ratio_vals(m["tax"]["vals"], m["pbt"]["vals"]), kind="ratio", fmt="pct",
             ratio_of=("tax", "pbt"))
         m["r_opex"] = {"vals": ratio_vals(opex, rev), "growth": [None] * 3, "label": "Opex to Revenue"}
@@ -225,7 +285,14 @@ def build(store: dict, period: Period) -> dict:
         add("Operating Expenses", "opex")
         add("Pre-Provision Operating Profit (PPOP)", "ppop")
         add("Provision Expenses", "provision")
-        add("Net Profit", "net_profit")
+        has_disc = any(v for v in c.flow("np_disc") if v)
+        if has_disc:
+            add("Profit from Discontinued Operations", "np_disc")
+        add("Net Profit attributable to parent" if has_disc else "Net Profit", "net_profit")
+        if has_disc:
+            add("Core Net Profit (excl. discontinued)", "net_profit_core")
+            m["net_profit_reported"] = m["net_profit"]
+            m["net_profit"] = m["net_profit_core"]
         for k in ("operating_profit", "pbt", "tax", "total_op_income"):
             v = c.flow(k)
             m[k] = {"vals": v, "growth": growths(v), "label": k}
@@ -256,13 +323,15 @@ def build(store: dict, period: Period) -> dict:
         m["ytd_loans"] = growth(loans[1], c.bs(ye, "bs_loans"))
         m["ytd_deposits"] = growth(dep[1], c.bs(ye, "bs_deposits"))
 
+    from bot2_extractor.validate import run_checks
+    checks = run_checks(c, m, rows, store, period, has_disc)
     from core.labels import to_en
     for r in rows:                      # label tabel berbahasa Inggris; "label" (Indonesia) dipakai narasi
         r["label_en"] = to_en(r["label"], store)
     cols = [period.same_last_year().cum_label, period.cum_label, period.same_last_year().q_label,
             period.prev().q_label, period.q_label]
     return {"rows": rows, "m": m, "cols": cols, "unit": unit, "period": period, "template": tpl,
-            "q_available": m["net_profit"]["vals"][4] is not None}
+            "q_available": m["net_profit"]["vals"][4] is not None, "decimals": DEC, **checks}
 
 
 def _roe(c: Calc, m, add, period: Period):

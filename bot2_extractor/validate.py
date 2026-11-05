@@ -1,0 +1,168 @@
+"""Validasi otomatis sebelum tabel dipublikasikan.
+
+Status per pemeriksaan:  PASS (selisih <= 0,5%)  |  WARN (0,5% - 3%)  |  FAIL (> 3%)
+Ambang diatur di config/settings.yaml bagian `validation`. Tabel berstatus FAIL tidak dikirim ke Discord.
+Selain itu modul ini menghasilkan anomali (bahan narasi) dan catatan kaki otomatis untuk tabel.
+"""
+from core import config as cfg
+from core.periods import Period
+
+V = cfg.SETTINGS.get("validation", {})
+A = cfg.SETTINGS.get("anomaly", {})
+PASS_PCT, FAIL_PCT = V.get("pass_pct", 0.5) / 100, V.get("fail_pct", 3.0) / 100
+ORDER = {"PASS": 0, "WARN": 1, "FAIL": 2}
+REQUIRED = {"general": ["revenue", "net_profit"],
+            "bank": ["core_income", "net_profit", "bs_loans", "bs_deposits"],
+            "bank_sharia": ["core_income", "net_profit", "bs_loans", "bs_deposits"]}
+COST_NAMES = {"cogs": "beban pokok pendapatan", "opex": "beban usaha", "provision": "beban pencadangan",
+              "core_cost": "biaya dana"}
+
+
+def _tier(gap):
+    if gap is None:
+        return "PASS"
+    return "PASS" if gap <= PASS_PCT else "WARN" if gap <= FAIL_PCT else "FAIL"
+
+
+def _gap(a, b):
+    """Selisih relatif |a-b| / |b|."""
+    if a is None or b is None or not b:
+        return None
+    return abs(a - b) / abs(b)
+
+
+def _en_money(v, currency):
+    if v is None:
+        return "n.a."
+    return f"IDR{v / 1e9:,.0f}bn" if currency == "IDR" else f"{currency}{v / 1e6:,.1f}mn"
+
+
+def run_checks(c, m, rows, store, period: Period, has_disc: bool) -> dict:
+    checks = []
+    tpl = store["template"]
+    entry = store["periods"].get(period.key, {"cur": {}, "prior": {}})
+
+    def add(name, status, detail=""):
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    # 1. pos wajib
+    for k in REQUIRED.get(tpl, []):
+        if entry["cur"].get(k) in (None, 0):
+            add(f"Pos wajib '{k}'", "FAIL", "tidak ditemukan di Excel")
+
+    # 2. identitas laba: PBT - Tax + discontinued = Net Profit total (periode berjalan & pembanding)
+    for side, lbl in (("cur", period.cum_label), ("prior", period.same_last_year().cum_label)):
+        d = entry[side]
+        if all(k in d for k in ("pbt", "tax", "np_total")):
+            calc = d["pbt"] - d["tax"] + (d.get("np_disc") or 0)
+            g = _gap(calc, d["np_total"])
+            add(f"PBT - Tax (+ disc. ops) = Net Profit ({lbl})", _tier(g), f"selisih {g * 100:.2f}%")
+
+    # 3. identitas laba kotor (bila laba kotor dilaporkan)
+    d = entry["cur"]
+    if all(k in d for k in ("revenue", "cogs", "gp_reported")):
+        g = _gap(d["revenue"] - d["cogs"], d["gp_reported"])
+        add("Revenue - COGS = Gross Profit", _tier(g), f"selisih {g * 100:.2f}%")
+
+    # 4. bank: laba operasional hasil hitung vs dilaporkan
+    if tpl.startswith("bank") and d.get("op_reported"):
+        g = abs(d.get("other_op_net") or 0) / abs(d["op_reported"])
+        add("Laba operasional bank (hitung vs laporan)", _tier(g), f"pos tak terpetakan {g * 100:.2f}%")
+
+    # 5. baris "Others" terlalu besar -> kemungkinan pos terlewat
+    parent = None
+    for r in rows:
+        if r["kind"] == "main":
+            parent = r
+        elif r["kind"] == "section":
+            parent = None
+        elif r["kind"] == "comp" and parent and r["label"].lower().startswith("lainnya") and \
+                not r["label"].lower().startswith("lainnya &"):
+            a_, b_ = r["vals"][1], parent["vals"][1]
+            share = None if a_ is None or not b_ else abs(a_) / abs(b_)
+            if share is not None and share > V.get("other_share_warn", 0.25):
+                add(f"Porsi 'Others' pada {parent['label']}", "WARN", f"{share * 100:.0f}% dari total")
+
+    # 6. basis kuartal tahun lalu
+    bad = sorted(k for k, b in c.basis.items() if b == "not_comparable")
+    if bad:
+        add("Basis kuartal tahun lalu", "WARN", "tidak sebanding (restated tidak lengkap): " + ", ".join(bad[:5]))
+
+    # 7. pendapatan memakai jalur cadangan
+    if d.get("_revenue_proxy"):
+        add("Pemetaan pendapatan", "WARN", "label pendapatan tidak dikenal, memakai baris terdekat")
+
+    # 8. roll-forward ekuitas (hanya peringatan: OCI & aksi korporasi juga mengubah ekuitas)
+    eq_end = c.bs(period, "bs_equity_parent")
+    eq_beg = c.bs(Period(period.year - 1, 3), "bs_equity_parent")
+    if None not in (eq_end, eq_beg, d.get("net_profit")):
+        exp = eq_beg + d["net_profit"] - (d.get("cf_dividends") or 0)
+        g = _gap(exp, eq_end)
+        st = _tier(g)
+        add("Roll-forward ekuitas", "WARN" if st == "FAIL" else st,
+            f"selisih {g * 100:.2f}% (bisa karena OCI/aksi korporasi)")
+
+    status = max((ch["status"] for ch in checks), key=ORDER.get, default="PASS")
+    return {"status": status, "checks": checks,
+            "anomalies": _anomalies(c, m, period),
+            "footnotes": _footnotes(c, m, store, period, has_disc)}
+
+
+def _anomalies(c, m, period: Period) -> list[str]:
+    out = []
+    lim = A.get("cost_qoq_pct", 15) / 100
+    for k, nm in COST_NAMES.items():
+        g = (m.get(k) or {}).get("growth", [None] * 3)[1]
+        if g is not None and abs(g) > lim:
+            out.append(f"{nm} bergerak {g * 100:+.1f}% QoQ pada {period.q_label}")
+    # margin di luar rentang beberapa kuartal terakhir
+    n = A.get("margin_lookback_quarters", 4)
+    for num, nm in (("gross_profit", "GPM"), ("operating_profit", "OPM")):
+        if num not in m or "revenue" not in m:
+            continue
+        cur = _q_margin(c, period, num)
+        hist, p = [], period
+        for _ in range(n):
+            p = p.prev()
+            v = _q_margin(c, p, num)
+            if v is not None:
+                hist.append(v)
+        if cur is not None and len(hist) >= 3 and not (min(hist) <= cur <= max(hist)):
+            out.append(f"{nm} {period.q_label} sebesar {cur * 100:.1f}% berada di luar rentang {len(hist)} kuartal "
+                       f"terakhir ({min(hist) * 100:.1f}%-{max(hist) * 100:.1f}%)")
+    g_ = (m.get("r_gross_profit") or {}).get("vals")
+    o_ = (m.get("r_operating_profit") or {}).get("vals")
+    if g_ and o_ and None not in (g_[3], g_[4], o_[3], o_[4]) and g_[4] < g_[3] and o_[4] > o_[3]:
+        out.append(f"OPM {period.q_label} naik saat GPM turun QoQ, kemungkinan karena waktu belanja iklan, "
+                   f"reklasifikasi, atau pos sekali jadi")
+    npv = (m.get("net_profit") or {}).get("vals")
+    if npv and None not in (npv[3], npv[4]) and (npv[3] > 0) != (npv[4] > 0):
+        out.append(f"laba bersih kuartalan berbalik {'menjadi rugi' if npv[4] < 0 else 'menjadi laba'} pada {period.q_label}")
+    return out
+
+
+def _q_margin(c, p: Period, num):
+    a, b = c.q(p, num), c.q(p, "revenue")
+    return None if a is None or not b else a / b
+
+
+def _footnotes(c, m, store, period: Period, has_disc: bool) -> list[str]:
+    cur = store["currency"]
+    notes = ["Growth rates are calculated from the displayed (rounded) figures."]
+    if store["template"] == "general":
+        notes.append("Operating profit = gross profit - selling expenses - G&A expenses.")
+    notes.append("ROE = annualized net profit / average parent equity (beginning & end of period); "
+                 + ("uses profit from continuing operations attributable to parent." if has_disc
+                    else "uses net profit attributable to parent."))
+    gaps = [c.restatement_gap(k) for k in ("revenue", "net_profit", "core_income")]
+    if c.restated or any(g is not None and g > 0.005 for g in gaps):
+        notes.append(f"{period.year - 1} comparatives are restated as presented in the latest report.")
+    if has_disc:
+        disc = (m.get("np_disc") or {}).get("vals", [None] * 5)[1]
+        notes.append(f"{period.cum_label} net profit includes profit from discontinued operations of "
+                     f"{_en_money(disc, cur)}; margins and ROE use core (continuing) profit.")
+    if any(b == "not_comparable" for b in c.basis.values()):
+        notes.append("n.m. on quarterly YoY: prior-year quarter not available on a comparable (restated) basis.")
+    elif any(b == "as_reported" for b in c.basis.values()):
+        notes.append("Prior-year quarter uses as-reported figures (no restatement detected).")
+    return notes

@@ -16,7 +16,8 @@ data:
   narrate_from: "3Q26"        # narasi hanya untuk periode ini dan sesudahnya
 
 scraper:
-  enabled: true
+  enabled: false              # prioritas kedua: Inbox adalah jalur utama. Ubah ke true untuk mengaktifkan.
+  min_interval_minutes: 60    # walau bot jalan tiap 15 menit, IDX dicek maks. sekali per jam
   base_url: "https://www.idx.co.id"
   report_page: "/id/perusahaan-tercatat/laporan-keuangan-dan-tahunan/"
   api_path: "/primary/ListedCompany/GetFinancialReport"
@@ -34,7 +35,7 @@ scraper:
 
 discord:
   attach_excel: false       # true = lampirkan file Excel di pesan Discord
-  status_messages: true
+  status_messages: false      # pesan status tidak dikirim ke Discord, hanya dicatat di _Sistem/log
 
 analysis:
   # Ambang batas yang dipakai mesin narasi
@@ -53,3 +54,16 @@ theme:
 table:
   max_groups: 4             # maksimal kelompok per pos, sisanya digabung ke "Lainnya"
   min_share: 0.02           # kelompok < 2% dari total digabung ke "Lainnya"
+
+validation:
+  pass_pct: 0.5               # selisih <= 0,5%  -> PASS
+  fail_pct: 3.0               # selisih 0,5-3%   -> WARN (tetap dikirim); > 3% -> FAIL (tidak dikirim)
+  other_share_warn: 0.25      # baris "Others" > 25% dari totalnya -> WARN (pos mungkin terlewat)
+  rounding_note_pct: 3.0      # beda % (dari angka dibulatkan vs presisi penuh) > 3% relatif -> diberi catatan
+
+anomaly:
+  cost_qoq_pct: 15            # pos biaya bergerak lebih dari +/-15% QoQ
+  margin_lookback_quarters: 4 # margin di luar rentang 4 kuartal terakhir
+
+inbox:
+  max_files_per_run: 60       # sisa file diproses pada putaran berikutnya

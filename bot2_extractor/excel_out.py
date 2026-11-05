@@ -27,7 +27,12 @@ def write_period_sheet(wb: Workbook, title: str, table: dict, company: str, tick
         del wb[sheet_name]
     ws = wb.create_sheet(sheet_name, 0)
     cols = table["cols"]
-    heads = [f"{company} - {ticker}.IJ", cols[0], cols[1], "YoY", cols[2], cols[3], cols[4], "QoQ", "YoY"]
+    status = table.get("status", "PASS")
+    if status == "FAIL":
+        ws.sheet_properties.tabColor = "C00000"
+    elif status == "WARN":
+        ws.sheet_properties.tabColor = "F4B183"
+    heads = [f"{company} - {ticker}.IJ" + ("  [PERLU DICEK]" if status == "FAIL" else ""), cols[0], cols[1], "YoY", cols[2], cols[3], cols[4], "QoQ", "YoY"]
     growth_cols = {4, 8, 9}
     for j, h in enumerate(heads, start=1):
         c = ws.cell(row=1, column=j, value=h)
@@ -65,7 +70,7 @@ def write_period_sheet(wb: Workbook, title: str, table: dict, company: str, tick
                     cell.value = v
                 cell.number_format = "0.00%"
             elif v is not None:
-                cell.value = v / scale
+                cell.value = round(v / scale, table.get("decimals", 0))   # angka sesuai tampilan
                 cell.number_format = numfmt
             cell.font = Font(name=F, size=9 if kind == "comp" else 10, color="595959" if kind == "comp" else "000000")
             cell.alignment = Alignment(horizontal="right")
@@ -77,6 +82,10 @@ def write_period_sheet(wb: Workbook, title: str, table: dict, company: str, tick
                 g.number_format = "0.00%"
                 g.alignment = Alignment(horizontal="right")
                 g.font = Font(name=F, size=9 if kind == "comp" else 10)
+        for i in row.get("round_note") or []:
+            from openpyxl.comments import Comment
+            ws.cell(row=r, column=(4, 8, 9)[i]).comment = Comment(
+                "Dihitung dari angka yang dibulatkan; beda >3% dari perhitungan presisi penuh.", "bot")
         for gcol in growth_cols:
             ws.cell(row=r, column=gcol).fill = PatternFill("solid", fgColor=GROWTH_FILL)
         for col in range(1, 10):
@@ -86,9 +95,10 @@ def write_period_sheet(wb: Workbook, title: str, table: dict, company: str, tick
     r += 1
     ws.cell(row=r, column=1, value="Source: Company (IDX XBRL & financial statements), processed").font = \
         Font(name=F, size=9, bold=True)
-    ws.cell(row=r + 1, column=1,
-            value="Quarterly figures = current cumulative minus previous cumulative. n.m. = not meaningful "
-                  "(zero/negative base or swing to loss). Operating profit (non-bank) = gross profit - selling - G&A.").font = Font(name=F, size=8, italic=True, color="7F7F7F")
+    notes = ["Quarterly figures = current cumulative minus previous cumulative. n.m. = not meaningful "
+             "(zero/negative base, swing to loss, or non-comparable basis)."] + list(table.get("footnotes") or [])
+    for i, n in enumerate(notes, start=1):
+        ws.cell(row=r + i, column=1, value=n).font = Font(name=F, size=8, italic=True, color="7F7F7F")
     ws.column_dimensions["A"].width = 48
     for col in range(2, 10):
         ws.column_dimensions[get_column_letter(col)].width = 12
@@ -120,6 +130,23 @@ def write_data_sheet(wb: Workbook, store: dict, scale: float) -> None:
         row[3].number_format = row[4].number_format = "#,##0.0"
 
 
+def write_validation_sheet(wb: Workbook, tables: list[dict]) -> None:
+    ws = wb.create_sheet("Validasi")
+    ws.append(["Periode", "Status", "Pemeriksaan", "Keterangan"])
+    for c in ws[1]:
+        c.font = Font(name=F, bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=NAVY)
+    color = {"PASS": "E2EFDA", "WARN": "FFF2CC", "FAIL": "F8CBAD"}
+    for t in sorted(tables, key=lambda t: t["period"], reverse=True):
+        for ch in t.get("checks", []) or [{"name": "-", "status": "PASS", "detail": ""}]:
+            ws.append([t["period"].label, ch["status"], ch["name"], ch["detail"]])
+            ws.cell(row=ws.max_row, column=2).fill = PatternFill("solid", fgColor=color[ch["status"]])
+        for a in t.get("anomalies", []):
+            ws.append([t["period"].label, "ANOMALI", a, ""])
+    for col, w in zip("ABCD", (10, 10, 55, 55)):
+        ws.column_dimensions[col].width = w
+
+
 def save_workbook(path: Path, tables: list[dict], store: dict) -> Path:
     from core.fmt import unit_info
     scale = unit_info(store["currency"])[0]
@@ -128,5 +155,6 @@ def save_workbook(path: Path, tables: list[dict], store: dict) -> Path:
     for t in sorted(tables, key=lambda t: t["period"]):
         write_period_sheet(wb, "", t, store.get("name", store["ticker"]), store["ticker"], store["currency"], scale)
     write_data_sheet(wb, store, scale)
+    write_validation_sheet(wb, tables)
     wb.save(path)
     return path

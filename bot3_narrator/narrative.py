@@ -130,6 +130,13 @@ def build(table: dict, store: dict, note: str | None = None) -> tuple[str, list[
         title, paras, watch = _general(w, M_, table, store, p)
     else:
         title, paras, watch = _bank(w, M_, table, store, p)
+    anomalies = list(table.get("anomalies") or [])
+    if anomalies:                              # anomali didahulukan di daftar yang perlu dicermati
+        watch = list(dict.fromkeys(anomalies[:2] + watch))
+        paras[-1] = _watch(watch, p)
+    disc = _discontinued(w, M_, table, p)
+    if disc:
+        paras.insert(1, disc)
     paras.insert(0, _summary(w, M_, table, p, watch))
     if note:
         paras.insert(-1, note.strip())
@@ -594,7 +601,7 @@ def _summary(w: W, M_: M, table, p: Period, watch) -> str:
         q_txt = f"; laba {p.q_label} {f(g('net_profit', 1))} QoQ"
     if table["template"] == "general":
         lines.append(f"**Kinerja:** pendapatan {w.m(M_.v('revenue'))} ({f(g('revenue'))} YoY), "
-                     f"laba bersih {w.m(M_.v('net_profit'))} ({f(g('net_profit'))} YoY){q_txt}.")
+                     f"{'laba inti' if table['m'].get('net_profit_reported') else 'laba bersih'} {w.m(M_.v('net_profit'))} ({f(g('net_profit'))} YoY){q_txt}.")
         lines.append(f"**Profitabilitas:** GPM {_pp(M_.v('r_gross_profit'))}{_chg(M_.v('r_gross_profit'), M_.v('r_gross_profit', 0))}, "
                      f"OPM {_pp(M_.v('r_operating_profit'))}{_chg(M_.v('r_operating_profit'), M_.v('r_operating_profit', 0))}, "
                      f"NPM {_pp(M_.v('r_net_profit'))}, ROE {_pp(M_.v('r_roe'))}.")
@@ -622,3 +629,20 @@ def _summary(w: W, M_: M, table, p: Period, watch) -> str:
         top = min(watch, key=lambda t: next((i for i, k in enumerate(prio) if k in t.lower()), len(prio)))
         lines.append(f"**Perlu dicermati:** {top}.")
     return "**Ringkasan " + L + "**\n" + "\n".join("• " + x for x in lines)
+
+
+def _discontinued(w: W, M_: M, table, p: Period):
+    """Paragraf khusus bila laba memuat operasi yang dihentikan (laba inti dipakai untuk analisis)."""
+    rep = table["m"].get("net_profit_reported")
+    if not rep:
+        return None
+    L, _ = _labels(p)
+    disc = M_.v("np_disc")
+    core, g_core = M_.v("net_profit"), M_.g("net_profit")
+    g_rep = rep["growth"][0]
+    txt = (f"Perlu dicatat, laba bersih yang dilaporkan pada {L} sebesar {w.m(rep['vals'][1])}"
+           + (f" ({g_rep * 100:+.1f}% YoY)" if g_rep is not None else "")
+           + f" termasuk laba dari operasi yang dihentikan sebesar {w.m(disc)}. ")
+    txt += (f"Tanpa pos tersebut, laba inti {w.to(g_core, core)}"
+            + ". Angka laba inti inilah yang dipakai dalam analisis margin dan ROE.")
+    return txt

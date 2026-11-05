@@ -50,7 +50,8 @@ def render(table: dict, company: str, ticker: str, currency: str, out: Path, max
 
     row_h, head_h = 0.24, 0.36
     W = sum(widths)
-    H = head_h + row_h * (len(lines) + 2)
+    notes = list(table.get("footnotes") or [])
+    H = head_h + row_h * (len(lines) + 2) + 0.17 * len(notes)
     fig = plt.figure(figsize=(W, H), dpi=170)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, W)
@@ -96,6 +97,8 @@ def render(table: dict, company: str, ticker: str, currency: str, out: Path, max
         ax.plot([x, x], [head_h, y], color="#E7E6E6", lw=0.5)
     ax.plot([0, W, W, 0, 0], [0, 0, y, y, 0], color="#BFBFBF", lw=0.8)
     ax.text(0.06, y + row_h * 0.9, "Source : Company (IDX) | processed", fontsize=7.5, fontweight="bold", va="center")
+    for i, n in enumerate(notes):
+        ax.text(0.06, y + row_h * 1.6 + 0.17 * i, n, fontsize=6.6, color="#7F7F7F", fontstyle="italic", va="center")
     fig.savefig(out, dpi=170, facecolor="white")
     plt.close(fig)
     return out

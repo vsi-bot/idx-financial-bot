@@ -115,11 +115,35 @@ def _sheet_by_title(wb, *keywords):
     return None
 
 
+def _n(s: str) -> str:
+    return re.sub(r"[^a-z0-9()]+", " ", str(s).lower()).strip()
+
+
 def _find(rows, *labels):
-    labels_l = [l.lower() for l in labels]
+    labels_l = {_n(l) for l in labels}
     for r in rows:
-        if r["en"].lower() in labels_l:
+        if _n(r["en"]) in labels_l:
             return r
+    return None
+
+
+import yaml as _yaml  # noqa: E402
+from core import config as _cfg  # noqa: E402
+
+LINE_ITEMS = _yaml.safe_load(open(_cfg.CONFIG_DIR / "line_items.yaml", encoding="utf-8")) or {}
+
+
+def _fk(rows, key):
+    """Cari pos berdasarkan kamus config/line_items.yaml: cocok persis dulu, lalu potongan kata."""
+    spec = LINE_ITEMS.get(key, {})
+    r = _find(rows, *(spec.get("exact") or []))
+    if r:
+        return r
+    for frag in spec.get("contains") or []:
+        f = _n(frag)
+        for row in rows:
+            if f in _n(row["en"]) and not _n(row["en"]).startswith(("other comprehensive", "total comprehensive")):
+                return row
     return None
 
 
@@ -142,41 +166,59 @@ class Out:
 
 
 # ----------------------------------------------------------- general industry
-REV = ["Sales and revenue", "Revenue", "Revenues", "Total revenue", "Revenue from contracts with customers",
-       "Operating revenues", "Total revenues"]
-COGS = ["Cost of sales and revenue", "Cost of revenue", "Cost of sales", "Cost of revenues"]
-GP = ["Total gross profit", "Gross profit"]
-SELL = ["Selling expenses", "Selling and marketing expenses"]
-GA = ["General and administrative expenses"]
-FIN_COST = ["Interest and finance costs", "Finance costs"]
-FIN_INC = ["Finance income"]
-PBT = ["Total profit (loss) before tax"]
-TAX = ["Tax benefit (expenses)"]
-NP_ALL = ["Total profit (loss)"]
-NP_PAR = ["Profit (loss) attributable to parent entity"]
-NP_NCI = ["Profit (loss) attributable to non-controlling interests"]
+def _L(key):
+    return LINE_ITEMS.get(key, {}).get("exact") or []
+
+
+REV, COGS, GP = _L("revenue"), _L("cogs"), _L("gross_profit")
+SELL, GA = _L("selling_exp"), _L("ga_exp")
+FIN_COST, FIN_INC = _L("fin_cost"), _L("fin_income")
+PBT, TAX, NP_ALL, NP_PAR, NP_NCI = _L("pbt"), _L("tax"), _L("np_total"), _L("np_parent"), _L("np_nci")
 
 
 def _common_bottom(o: Out, isr):
-    o.put_row("pbt", _find(isr, *PBT))
-    o.put_row("tax", _find(isr, *TAX), lambda v: -v)          # beban pajak bernilai positif
+    o.put_row("pbt", _fk(isr, "pbt"))
+    o.put_row("tax", _fk(isr, "tax"), lambda v: -v)           # beban pajak bernilai positif
     o.put_row("np_total", _find(isr, *NP_ALL))
-    par = _find(isr, *NP_PAR)
+    o.put_row("np_disc", _fk(isr, "np_disc"))
+    o.put_row("np_cont", _fk(isr, "np_cont"))
+    par = _fk(isr, "np_parent")
     o.put_row("net_profit", par or _find(isr, *NP_ALL))
-    o.put_row("np_nci", _find(isr, *NP_NCI))
+    o.put_row("np_nci", _fk(isr, "np_nci"))
+    for side in ("cur", "prior"):
+        d = getattr(o, side)
+        disc = d.get("np_disc") or 0.0
+        if "np_cont" not in d and "np_total" in d:
+            d["np_cont"] = d["np_total"] - disc
+        if "np_cont" not in d and "pbt" in d and "tax" in d:
+            d["np_cont"] = d["pbt"] - d["tax"]
+        # laba inti (continuing) yang diatribusikan ke induk; operasi dihentikan diasumsikan milik induk
+        if "net_profit" in d:
+            d["net_profit_core"] = d["net_profit"] - disc
 
 
 def _general(wb, o: Out, isr, bs):
-    rev = _find(isr, *REV)
+    rev = _fk(isr, "revenue")
+    if not rev:                       # jalur cadangan: baris pertama yang tampak seperti pendapatan
+        for r in isr[:6]:
+            en = _n(r["en"])
+            if any(w in en for w in ("revenue", "income", "sales")) and not any(
+                    w in en for w in ("expense", "cost", "tax", "comprehensive", "other", "share of")):
+                rev = r
+                o.cur["_revenue_proxy"] = 1.0
+                break
     if not rev:
         return False
     o.put_row("revenue", rev)
-    o.put_row("cogs", _find(isr, *COGS), abs)
-    o.put_row("gross_profit", _find(isr, *GP))
-    o.put_row("selling_exp", _find(isr, *SELL), abs)
-    o.put_row("ga_exp", _find(isr, *GA), abs)
-    o.put_row("fin_cost", _find(isr, *FIN_COST), abs)
-    o.put_row("fin_income", _find(isr, *FIN_INC))
+    o.put_row("cogs", _fk(isr, "cogs"), abs)
+    gp_row = _fk(isr, "gross_profit")
+    o.put_row("gross_profit", gp_row)
+    if gp_row:
+        o.put_row("gp_reported", gp_row)          # dipakai untuk validasi Rev - COGS = GP
+    o.put_row("selling_exp", _fk(isr, "selling_exp"), abs)
+    o.put_row("ga_exp", _fk(isr, "ga_exp"), abs)
+    o.put_row("fin_cost", _fk(isr, "fin_cost"), abs)
+    o.put_row("fin_income", _fk(isr, "fin_income"))
     _common_bottom(o, isr)
     for side in ("cur", "prior"):
         d = getattr(o, side)
@@ -366,6 +408,8 @@ def parse(path) -> dict:
     bs = _pick(wb, "Statement of financial position")
     o = Out(meta["factor"])
     is_sharia = any(r["en"].lower() == "revenue from fund management as mudharib" and r["cur"] for r in isr)
+    cf = _pick(wb, "Statement of cash flows")
+    o.put_row("cf_dividends", _fk(cf, "dividends_paid"), abs)
     if _bank(wb, o, isr, bs):
         template = "bank_sharia" if is_sharia else "bank"
     elif _general(wb, o, isr, bs):

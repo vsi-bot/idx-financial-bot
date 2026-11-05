@@ -4,6 +4,7 @@
 # Tambahkan baris di "exact" jika ada label yang terjemahannya kurang pas.
 # ============================================================
 exact:
+  "Biaya tanah & bangunan (properti)": "Land & building costs (property)"
   "Lainnya": "Others"
   "Lainnya & eliminasi": "Others & eliminations"
   "Lain-lain": "Others"

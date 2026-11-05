@@ -11,7 +11,14 @@
  */
 const PROPS = PropertiesService.getScriptProperties();
 
+/** Bot hanya dipicu pukul 07.00 - 17.30 WIB; file di luar jam itu diproses pada putaran 07.00. */
+function inWindow_() {
+  const hm = Utilities.formatDate(new Date(), 'Asia/Jakarta', 'HH:mm');
+  return hm >= '07:00' && hm <= '17:30';
+}
+
 function checkInbox() {
+  if (!inWindow_()) return;
   const root = DriveApp.getFolderById(PROPS.getProperty('ROOT_FOLDER_ID'));
   const it = root.getFoldersByName('Inbox');
   if (!it.hasNext()) return;

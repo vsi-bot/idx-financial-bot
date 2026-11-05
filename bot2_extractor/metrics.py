@@ -153,6 +153,16 @@ _GROUPS = yaml.safe_load(open(_cfg.CONFIG_DIR / "groups.yaml", encoding="utf-8")
 _TBL = _cfg.SETTINGS.get("table", {"max_groups": 4, "min_share": 0.02})
 
 
+def _fill_vals(target, a, b):
+    """Isi kolom kosong pada target dengan a - b (fallback identitas), bila keduanya tersedia."""
+    return [t if t is not None else (None if x is None or y is None else x - y) for t, x, y in zip(target, a, b)]
+
+
+def _fill(m, key, a, b):
+    if key in m and a in m and b in m:
+        m[key]["vals"] = _fill_vals(m[key]["vals"], m[a]["vals"], m[b]["vals"])
+
+
 def _sum_lists(lists):
     out = []
     for col in zip(*lists):
@@ -184,8 +194,29 @@ def build(store: dict, period: Period) -> dict:
     def rnd(v):
         return None if v is None else round(v / SC, DEC) * SC
 
-    def add(label, key=None, vals=None, kind="main", fmt="num", ratio_of=None):
+    G = _cfg.SETTINGS.get("growth", {})
+
+    def nm_rules(g, vals, parent, net, always_nm):
+        """Aturan n.m. tambahan: basis mendekati nol vs pos induk, pos net ekstrem, pos yang selalu n.m."""
+        if always_nm:
+            return [None, None, None]
+        out = list(g)
+        for j, bi in enumerate((0, 3, 2)):
+            if out[j] is None:
+                continue
+            base = vals[bi]
+            pb = (m.get(parent) or {}).get("vals", [None] * 5)[bi] if parent else None
+            if pb and base is not None and abs(base) < abs(pb) * G.get("near_zero_pct", 1) / 100:
+                out[j] = None
+            elif net and abs(out[j]) > G.get("net_extreme_pct", 500) / 100:
+                out[j] = None
+        return out
+
+    def add(label, key=None, vals=None, kind="main", fmt="num", ratio_of=None, parent=None, net=False, always_nm=False):
         vals = vals if vals is not None else c.flow(key)
+        if parent is None and tpl == "general" and fmt == "num" and key not in (None, "revenue") \
+                and not str(key).startswith("bs_") and kind == "main":
+            parent = "revenue"
         notes = []
         if fmt == "num":
             # pertumbuhan dihitung dari angka yang DITAMPILKAN (dibulatkan) agar cocok dengan tabel
@@ -194,6 +225,8 @@ def build(store: dict, period: Period) -> dict:
                      if a is not None and b is not None and abs(a - b) > max(tol * abs(b), 0.0005)]
         else:
             g = [None, None, None]
+        if fmt == "num":
+            g = nm_rules(g, vals, parent, net, always_nm)
         rows.append({"label": label, "key": key, "kind": kind, "fmt": fmt, "vals": vals, "growth": g,
                      "ratio_of": ratio_of, "round_note": notes, "basis": c.basis.get(key) if key else None})
         if key:
@@ -227,11 +260,13 @@ def build(store: dict, period: Period) -> dict:
         keep = [g for g in ranked if abs(agg[g][1] or 0) / base >= _TBL["min_share"]][:_TBL["max_groups"]]
         rest = [agg[g] for g in agg if g not in keep]
         out = []
+        is_net = prefix in ("nonop_comp", "seg_profit", "noncore_comp")
+        par = total_key if total_key in m else None          # basis mendekati nol diukur terhadap pos induknya
         for g in keep:
-            add(g, f"{prefix}::grp_{g}", agg[g], kind="comp")
+            add(g, f"{prefix}::grp_{g}", agg[g], kind="comp", parent=par, net=is_net)
             out.append(g)
         if rest:
-            add(other, f"{prefix}::grp_{other}", _sum_lists(rest), kind="comp")
+            add(other, f"{prefix}::grp_{other}", _sum_lists(rest), kind="comp", parent=par, net=is_net)
         return out
 
     unit = "IDR Bn" if store["currency"] == "IDR" else f"{store['currency']} Mn"
@@ -242,19 +277,22 @@ def build(store: dict, period: Period) -> dict:
         components("rev_seg", "revenue")
         add("Cost of Revenue", "cogs")
         components("cogs_comp", "cogs")
-        add("Gross Profit", "gross_profit")
+        add("Gross Profit", "gross_profit", _fill_vals(c.flow("gross_profit"), c.flow("revenue"), c.flow("cogs")))
         opex = [None if (a is None and b is None) else (a or 0) + (b or 0)
                 for a, b in zip(c.flow("selling_exp"), c.flow("ga_exp"))]
+        opex = _fill_vals(opex, c.flow("gross_profit"), c.flow("operating_profit"))   # Opex = GP - OP
         add("Operating Expenses", "opex", opex)
-        add("Operating Profit", "operating_profit")
-        add("Non-operating Items (net)", "non_operating")
+        add("Operating Profit", "operating_profit", _fill_vals(c.flow("operating_profit"), m["gross_profit"]["vals"], opex))
+        # fallback identitas untuk kolom kuartalan yang kosong (aturan pengisian data)
+        add("Non-operating Items (net)", "non_operating", _fill_vals(c.flow("non_operating"), c.flow("pbt"),
+                                                                     m["operating_profit"]["vals"]), net=True)
         components("nonop_comp", "non_operating")
         add("Profit Before Tax", "pbt")
         add("Tax Expense", "tax")
         has_disc = any(v for v in c.flow("np_disc") if v)
         if has_disc:
             add("Profit from Continuing Operations", "np_cont")
-            add("Profit from Discontinued Operations", "np_disc")
+            add("Profit from Discontinued Operations", "np_disc", net=True)
             if any(v for v in c.flow("np_nci") if v):
                 add("Net Profit (total)", "np_total")
         add("Net Profit attributable to parent" if has_disc else "Net Profit", "net_profit")
@@ -282,7 +320,7 @@ def build(store: dict, period: Period) -> dict:
         eq = c.stock("bs_equity_parent")
         add("Net Debt to Equity", "r_nde", ratio_vals(nd, eq), kind="ratio", fmt="pct")
         rows.append({"label": f"Balance Sheet - {unit}", "kind": "section"})
-        add("Net Debt (Cash)", "bs_net_debt", nd)
+        add("Net Debt (Cash)", "bs_net_debt", nd, always_nm=True)     # narasi memakai perubahan nominal
         add("Equity (parent)", "bs_equity_parent", eq)
 
     else:  # bank konvensional / syariah

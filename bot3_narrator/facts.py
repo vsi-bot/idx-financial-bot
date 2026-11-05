@@ -76,7 +76,7 @@ class Facts:
         return self.labels.get(key, key)
 
 
-MONEY_RE = re.compile(r"(?:Rp|USD)\s?-?\d[\d.,]*\s(?:miliar|triliun|juta)")
+MONEY_RE = re.compile(r"(?:Rp|USD)\s?-?\d[\d.,]*\s(?:miliar|triliun|juta)", re.I)
 PCT_RE = re.compile(r"[+-]?\d[\d.,]*%")
 BPS_RE = re.compile(r"[+-]?\d[\d.]*\sbps")
 
@@ -85,7 +85,7 @@ def check(paragraphs: list[str], facts: Facts) -> list[str]:
     """Kembalikan daftar pelanggaran keras (kosong = lolos)."""
     text = "\n".join(p for p in paragraphs if p)
     bad = []
-    if re.search(r"(?:Rp|USD)\s?-\d", text):
+    if re.search(r"(?:Rp|USD)\s?-\d", text, re.I):
         bad.append("format nominal negatif (Rp-xx)")
     known = {f["text"] for f in facts.items}
     for rx in (MONEY_RE, PCT_RE, BPS_RE):

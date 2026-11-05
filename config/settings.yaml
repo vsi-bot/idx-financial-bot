@@ -89,3 +89,7 @@ oneoff:
     BBRI: ["Pemulihan aset dihapusbukukan"]
 review:
   auto_ok_templates: ["general", "bank", "bank_sharia"]   # selain ini: tahan untuk ditinjau sekali
+
+growth:
+  near_zero_pct: 1            # |basis| < 1% dari pos induk -> n.m.
+  net_extreme_pct: 500        # pos net (non-operasi, laba segmen) dengan growth > 500% -> n.m.

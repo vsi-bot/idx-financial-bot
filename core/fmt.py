@@ -51,9 +51,9 @@ def bps(x) -> str:
 
 def growth(cur, base):
     """Pertumbuhan; None (n.m.) jika basis kosong, nol, atau negatif."""
-    if cur is None or base is None or base <= 0 or cur < 0:
-        return None          # basis nol/negatif atau berbalik rugi: tidak bermakna (n.m.)
-    return cur / base - 1
+    if cur is None or base is None or base == 0 or (cur < 0) != (base < 0):
+        return None          # basis nol atau tanda berubah (laba<->rugi, pendapatan<->beban): n.m.
+    return abs(cur) / abs(base) - 1   # tanda sama: dari nilai absolut (beban dalam kurung: positif = beban naik)
 
 
 def safe_div(a, b):

@@ -5,48 +5,125 @@
 # Tambahkan sinonim baru di sini bila ada emiten yang memakai istilah berbeda.
 # ============================================================
 revenue:
-  exact: ["Sales and revenue", "Revenue", "Revenues", "Total revenue", "Total revenues", "Operating revenues",
-          "Revenue from contracts with customers", "Net sales", "Sales", "Total income", "Income"]
-  contains: ["total revenue", "sales and revenue", "operating revenue", "net revenue"]
+  exact:
+  - Sales and revenue
+  - Revenue
+  - Revenues
+  - Total revenue
+  - Total revenues
+  - Operating revenues
+  - Revenue from contracts with customers
+  - Net sales
+  - Sales
+  - Total income
+  - Income
+  contains:
+  - total revenue
+  - sales and revenue
+  - operating revenue
+  - net revenue
 cogs:
-  exact: ["Cost of sales and revenue", "Cost of revenue", "Cost of revenues", "Cost of sales", "Cost of goods sold"]
-  contains: ["cost of sales", "cost of revenue", "direct cost"]
+  exact:
+  - Cost of sales and revenue
+  - Cost of revenue
+  - Cost of revenues
+  - Cost of sales
+  - Cost of goods sold
+  contains:
+  - cost of sales
+  - cost of revenue
+  - direct cost
 gross_profit:
-  exact: ["Total gross profit", "Gross profit", "Gross profit (loss)"]
+  exact:
+  - Total gross profit
+  - Gross profit
+  - Gross profit (loss)
   contains: []
 selling_exp:
-  exact: ["Selling expenses", "Selling and marketing expenses", "Selling and distribution expenses"]
-  contains: ["selling expense"]
+  exact:
+  - Selling expenses
+  - Selling and marketing expenses
+  - Selling and distribution expenses
+  contains:
+  - selling expense
 ga_exp:
-  exact: ["General and administrative expenses", "General and administration expenses"]
-  contains: ["general and administrative"]
+  exact:
+  - General and administrative expenses
+  - General and administration expenses
+  - Selling, general and administrative expenses
+  - General, administrative and selling expenses
+  - Operating expenses
+  - General and administrative
+  contains:
+  - general and administrative
+  - general and administration
+  - administrative expense
 fin_cost:
-  exact: ["Interest and finance costs", "Finance costs", "Finance cost"]
-  contains: ["finance cost"]
+  exact:
+  - Interest and finance costs
+  - Finance costs
+  - Finance cost
+  contains:
+  - finance cost
 fin_income:
-  exact: ["Finance income", "Interest income"]
-  contains: ["finance income"]
+  exact:
+  - Finance income
+  - Interest income
+  contains:
+  - finance income
 pbt:
-  exact: ["Total profit (loss) before tax", "Profit (loss) before tax", "Profit before income tax"]
-  contains: ["before tax", "before income tax"]
+  exact:
+  - Total profit (loss) before tax
+  - Profit (loss) before tax
+  - Profit before income tax
+  contains:
+  - before tax
+  - before income tax
 tax:
-  exact: ["Tax benefit (expenses)", "Income tax benefit (expense)", "Tax expense"]
-  contains: ["tax benefit", "income tax expense"]
+  exact:
+  - Tax benefit (expenses)
+  - Income tax benefit (expense)
+  - Tax expense
+  contains:
+  - tax benefit
+  - income tax expense
 np_cont:
-  exact: ["Total profit (loss) from continuing operations", "Profit (loss) from continuing operations"]
-  contains: ["from continuing operation"]
+  exact:
+  - Total profit (loss) from continuing operations
+  - Profit (loss) from continuing operations
+  contains:
+  - from continuing operation
 np_disc:
-  exact: ["Profit (loss) from discontinued operations", "Total profit (loss) from discontinued operations"]
-  contains: ["discontinued operation"]
+  exact:
+  - Profit (loss) from discontinued operations
+  - Total profit (loss) from discontinued operations
+  contains:
+  - discontinued operation
 np_total:
-  exact: ["Total profit (loss)", "Profit (loss)", "Profit (loss) for the period"]
+  exact:
+  - Total profit (loss)
+  - Profit (loss)
+  - Profit (loss) for the period
   contains: []
 np_parent:
-  exact: ["Profit (loss) attributable to parent entity", "Profit attributable to owners of the parent"]
-  contains: ["attributable to parent", "attributable to owners of the parent"]
+  exact:
+  - Profit (loss) attributable to parent entity
+  - Profit attributable to owners of the parent
+  contains:
+  - attributable to parent
+  - attributable to owners of the parent
 np_nci:
-  exact: ["Profit (loss) attributable to non-controlling interests"]
-  contains: ["attributable to non-controlling"]
+  exact:
+  - Profit (loss) attributable to non-controlling interests
+  contains:
+  - attributable to non-controlling
 dividends_paid:
-  exact: ["Dividends paid", "Payments of dividends", "Cash dividends paid"]
-  contains: ["dividends paid", "payment of dividend", "payments of dividend", "dividend payment"]
+  exact:
+  - Dividends paid
+  - Payments of dividends
+  - Cash dividends paid
+  contains:
+  - dividends paid
+  - payment of dividend
+  - payments of dividend
+  - dividend payment

@@ -26,6 +26,13 @@ CASES = [
     ("UNVR", "3Q26", "revenue", 2, 8242, 0.01),
     ("UNVR", "3Q26", "net_profit", 1, 3314, 0.01),
     ("UNVR", "3Q26", "np_disc", 1, 887, 0.02),
+    # INCO 3Q26 (dari evaluasi): opex kuartalan via fallback identitas, growth beban dalam kurung
+    ("INCO", "3Q26", "opex", 2, 9.0, 0.02),
+    ("INCO", "3Q26", "opex", 3, 7.8, 0.02),
+    ("INCO", "3Q26", "opex", 4, 8.2, 0.02),
+    ("INCO", "3Q26", "growth:nonop_comp::grp_Beban keuangan", 0, 52.46, 0.005),
+    ("INCO", "3Q26", "growth:nonop_comp::grp_Beban keuangan", 1, -37.21, 0.005),
+    ("INCO", "3Q26", "growth:nonop_comp::grp_Beban keuangan", 2, 35.00, 0.005),
 ]
 
 
@@ -56,8 +63,12 @@ def main():
             print(f"SKIP {tk} {label}: periode belum ada")
             continue
         t = metrics.build(data, P)
-        v = (t["m"].get(key) or {}).get("vals", [None] * 5)[col]
-        got = None if v is None else v / unit_info(data["currency"])[0]
+        if key.startswith("growth:"):
+            g = (t["m"].get(key[7:]) or {}).get("growth", [None] * 3)[col]
+            got = None if g is None else g * 100
+        else:
+            v = (t["m"].get(key) or {}).get("vals", [None] * 5)[col]
+            got = None if v is None else v / unit_info(data["currency"])[0]
         passed = got is not None and abs(got - exp) <= abs(exp) * tol
         ok += passed
         bad += not passed

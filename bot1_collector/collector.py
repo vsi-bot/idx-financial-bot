@@ -101,6 +101,18 @@ def process_inbox(st, state, wl) -> set[str]:
         else:
             changed.add(tk)
             discord.status(f"{tk} {p.label}: **{f['name']}** received from Inbox (identified by {how}){note}.", "ok")
+    # periode yang baru punya PDF tanpa Excel -> notifikasi "menunggu Excel"
+    from core import notify
+    waiting = []
+    for f, parent, hint in items:
+        res = identify(f["name"], wl, hint, None)
+        if res and f["name"].lower().endswith(".pdf"):
+            tk, p, _ = res
+            pf = st.folder(period_path(tk, p))
+            if not any(x["name"].lower().endswith(".xlsx") for x in st.list(pf)):
+                waiting.append({"ticker": tk, "period": p.label, "reason": "baru ada PDF, file Excel belum diunggah",
+                                "fix": f"unggah FinancialStatement-{p.year}-...-{tk}.xlsx ke Inbox"})
+    notify.record(waiting)
     return changed
 
 

@@ -67,3 +67,25 @@ anomaly:
 
 inbox:
   max_files_per_run: 60       # sisa file diproses pada putaran berikutnya
+
+narrative:
+  flat_pct: 1                 # |x| < 1%  -> stabil
+  thin_pct: 5                 # 1-5%      -> tipis/moderat
+  solid_pct: 15               # 5-15%     -> solid; > 15% -> kuat
+  margin_flat_bps: 50         # perubahan margin < 50 bps -> stabil
+  bridge_gap_pp: 5            # jembatan laba bila selisih pertumbuhan > 5 pp (atau ada n.m.)
+  base_effect_qoq_pct: 30     # |QoQ| > 30% -> sebut YoY + kemungkinan efek basis
+  incremental_min_pct: 2      # analisis inkremental bila delta pendapatan > 2%
+  immaterial_pct: 1           # pos < 1% pendapatan tidak dikutip pertumbuhannya
+  driver_main_share: 0.5      # > 50% kontribusi searah -> penggerak utama
+  oneoff_pbt_share: 0.10      # pos sekali jadi: >= 10% |PBT| ...
+  oneoff_jump: 1.5            # ... dan >= 1,5x periode pembanding
+  inorganic_asset_jump: 0.30  # aset tumbuh > 30% YoY -> sebut kemungkinan anorganik
+oneoff:
+  groups: ["Selisih kurs", "Penjualan aset & nilai wajar", "Penurunan nilai", "Lainnya",
+           "Pemulihan aset dihapusbukukan", "Treasury & selisih kurs"]
+  exceptions:                 # pos yang rutin bagi emiten tertentu (tidak dianggap sekali jadi)
+    ASII: ["Bagian laba entitas asosiasi/ventura"]
+    BBRI: ["Pemulihan aset dihapusbukukan"]
+review:
+  auto_ok_templates: ["general", "bank", "bank_sharia"]   # selain ini: tahan untuk ditinjau sekali

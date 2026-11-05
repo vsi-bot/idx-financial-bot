@@ -48,6 +48,14 @@ def read_meta(path) -> dict:
         cells = [c for c in r if c not in (None, "")]
         if len(cells) >= 3 and isinstance(cells[-1], str):
             info[cells[-1].strip()] = cells[1]
+    start = info.get("Current period start date")
+    if isinstance(start, str):
+        try:
+            start = datetime.strptime(start[:10], "%Y-%m-%d").date()
+        except ValueError:
+            start = None
+    elif isinstance(start, datetime):
+        start = start.date()
     end = info.get("Current period end date")
     if isinstance(end, str):
         end = datetime.strptime(end[:10], "%Y-%m-%d").date()
@@ -78,6 +86,7 @@ def read_meta(path) -> dict:
         "industry": str(info.get("Entity main industry", "")),
         "subsector": str(info.get("Subsector", "")),
         "audit": str(info.get("Type of report on financial statements", "")),
+        "fiscal_ok": not (isinstance(start, date) and start.month != 1),   # tahun buku Januari-Desember
     }
 
 
@@ -219,6 +228,17 @@ def _general(wb, o: Out, isr, bs):
     o.put_row("ga_exp", _fk(isr, "ga_exp"), abs)
     o.put_row("fin_cost", _fk(isr, "fin_cost"), abs)
     o.put_row("fin_income", _fk(isr, "fin_income"))
+    # rincian pos non-operasi: semua baris di antara beban usaha dan laba sebelum pajak
+    pbt_row = _fk(isr, "pbt")
+    anchor = _fk(isr, "ga_exp") or _fk(isr, "selling_exp") or gp_row
+    if anchor and pbt_row and anchor in isr and pbt_row in isr:
+        for r in isr[isr.index(anchor) + 1:isr.index(pbt_row)]:
+            en = _n(r["en"])
+            if en.startswith(("total", "subtotal")):
+                continue
+            expense = any(w in en for w in ("costs", "expenses", "expense", "cost")) and not any(
+                w in en for w in ("gain", "income", "profit", "reversal"))
+            o.put_row(f"nonop_comp::{r['id'] or r['en']}", r, (lambda v: -abs(v)) if expense else (lambda v: v))
     _common_bottom(o, isr)
     for side in ("cur", "prior"):
         d = getattr(o, side)
@@ -301,6 +321,8 @@ CORE_COST = ("interest expenses", "interest expense", "third parties share on re
              "interest and sharia expenses")
 LOAN_RE = re.compile(r"^(loans|(murabahah|istishna|ijarah|salam|multijasa) receivables|qardh funds|"
                      r"(mudharabah|musyarakah) financing|sharia receivables|consumer financing receivables)\b")
+EA_RE = re.compile(r"^(placements? with|marketable securities|government (bonds|securities)|"
+                   r"investments? in (sharia )?securities|securities purchased|sukuk)")
 CUR_RE = re.compile(r"(wadiah demand deposits|mudharabah current account|^current accounts? (third|related)|"
                     r"^demand deposits)")
 SAV_RE = re.compile(r"(savings|saving deposits)")
@@ -372,7 +394,7 @@ def _bank(wb, o: Out, isr, bs):
     o.put_row("bs_equity_parent", _find(bs, "Total equity attributable to equity owners of parent entity"))
     o.put_row("bs_equity", _find(bs, "Total equity"))
     liab = False
-    acc = {k: {"cur": 0.0, "prior": 0.0} for k in ("bs_loans", "dep_current", "dep_savings", "dep_time")}
+    acc = {k: {"cur": 0.0, "prior": 0.0} for k in ("bs_loans", "dep_current", "dep_savings", "dep_time", "bs_ea_other")}
     for r in bs:
         en = r["en"].lower()
         if en == "total assets":
@@ -383,6 +405,8 @@ def _bank(wb, o: Out, isr, bs):
         key = None
         if not liab and LOAN_RE.search(en):
             key = "bs_loans"
+        elif not liab and EA_RE.search(en):
+            key = "bs_ea_other"        # aset produktif selain kredit (untuk estimasi NIM)
         elif liab and CUR_RE.search(en):
             key = "dep_current"
         elif liab and SAV_RE.search(en):
@@ -421,6 +445,7 @@ def parse(path) -> dict:
         "ticker": meta["ticker"], "name": meta["name"], "period": p.key,
         "currency": meta["currency"], "template": template,
         "industry": meta["industry"], "subsector": meta["subsector"], "audit": meta["audit"],
+        "fiscal_ok": meta["fiscal_ok"],
         "cur": o.cur, "prior": o.prior,
         # pembanding laba rugi = periode sama tahun lalu; pembanding neraca = akhir tahun lalu
         "prior_is_period": Period(p.year - 1, p.idx).key,

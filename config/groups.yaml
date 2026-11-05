@@ -133,3 +133,28 @@ opex_comp:
   Umum & administrasi:
   - umum
   - administrasi
+nonop_comp:
+  Pendapatan keuangan:
+  - pendapatan keuangan
+  - pendapatan bunga
+  - penghasilan keuangan
+  Beban keuangan:
+  - beban keuangan
+  - beban bunga
+  - biaya keuangan
+  Selisih kurs:
+  - kurs
+  - selisih
+  Bagian laba entitas asosiasi/ventura:
+  - asosiasi
+  - ventura
+  - entitas
+  Penjualan aset & nilai wajar:
+  - penjualan
+  - pelepasan
+  - nilai wajar
+  - revaluasi
+  Penurunan nilai:
+  - penurunan nilai
+  - impairment
+  - penghapusan

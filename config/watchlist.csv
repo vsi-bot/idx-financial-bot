@@ -1,51 +1,51 @@
-ticker,nama,sektor
-BBCA,Bank Central Asia Tbk,Finance
-BBRI,Bank Rakyat Indonesia (Persero) Tbk,Finance
-BMRI,Bank Mandiri (Persero) Tbk,Finance
-ADRO,Alamtri Resources Indonesia Tbk,Energy
-ITMG,Indo Tambangraya Megah Tbk,Energy
-BRIS,Bank Syariah Indonesia Tbk,Finance
-PTBA,Bukit Asam Tbk,Energy
-TAPG,Triputra Agro Persada Tbk,Consumer Non-Cyclicals
-UNTR,United Tractors Tbk,Industrials
-BBNI,Bank Negara Indonesia Tbk,Finance
-KLBF,Kalbe Farma Tbk,Healthcare
-ICBP,Indofood CBP Sukses Makmur Tbk,Consumer Non-Cyclicals
-LSIP,PP London Sumatra Indonesia Tbk,Consumer Non-Cyclicals
-TLKM,Telkom Indonesia (Persero) Tbk,Infrastructures
-TKIM,Pabrik Kertas Tjiwi Kimia Tbk,Basic Materials
-MYOR,Mayora Indah Tbk,Consumer Non-Cyclicals
-DSNG,Dharma Satya Nusantara Tbk,Consumer Non-Cyclicals
-BFIN,BFI Finance Indonesia Tbk,Finance
-AADI,Adaro Andalan Indonesia Tbk,Energy
-ASII,Astra International Tbk,Industrials
-HMSP,Hanjaya Mandala Sampoerna Tbk,Consumer Non-Cyclicals
-BBTN,Bank Tabungan Negara (Persero) Tbk,Finance
-SIDO,Industri Jamu dan Farmasi Sido Muncul Tbk,Healthcare
-BDMN,Bank Danamon Indonesia Tbk,Finance
-RAJA,Rukun Raharja Tbk,Energy
-UNVR,Unilever Indonesia Tbk,Consumer Non-Cyclicals
-TOWR,Sarana Menara Nusantara Tbk,Infrastructures
-CPIN,Charoen Pokphand Indonesia Tbk,Consumer Non-Cyclicals
-RMKE,RMK Energy Tbk,Energy
-MIKA,Mitra Keluarga Karyasehat Tbk,Healthcare
-SCMA,Surya Citra Media Tbk,Consumer Cyclicals
-MARK,Mark Dynamics Indonesia Tbk,Industrials
-ADMR,Adaro Minerals Indonesia Tbk,Energy
-JPFA,Japfa Comfeed Indonesia Tbk,Consumer Non-Cyclicals
-CMRY,Cisarua Mountain Dairy Tbk,Consumer Non-Cyclicals
-STAA,Sumber Tani Agung Resources Tbk,Consumer Non-Cyclicals
-IMPC,Impack Pratama Industri Tbk,Industrials
-AKRA,AKR Corporindo Tbk,Energy
-DEWA,Darma Henwa Tbk,Energy
-ISAT,Indosat Tbk,Infrastructures
-DMAS,Puradelta Lestari Tbk,Property & Real Estate
-EMTK,Elang Mahkota Teknologi Tbk,Technology
-ENRG,Energi Mega Persada Tbk,Energy
-PGEO,Pertamina Geothermal Energy Tbk,Infrastructures
-INCO,Vale Indonesia Tbk,Basic Materials
-INKP,Indah Kiat Pulp and Paper Tbk,Basic Materials
-ESSA,ESSA Industries Indonesia Tbk,Basic Materials
-AALI,Astra Agro Lestari Tbk,Consumer Non-Cyclicals
-MAPI,Mitra Adiperkasa Tbk,Consumer Cyclicals
-ANTM,Aneka Tambang Tbk,Basic Materials
+ticker,nama,sektor,musiman
+BBCA,Bank Central Asia Tbk,Finance,
+BBRI,Bank Rakyat Indonesia (Persero) Tbk,Finance,
+BMRI,Bank Mandiri (Persero) Tbk,Finance,
+ADRO,Alamtri Resources Indonesia Tbk,Energy,
+ITMG,Indo Tambangraya Megah Tbk,Energy,
+BRIS,Bank Syariah Indonesia Tbk,Finance,
+PTBA,Bukit Asam Tbk,Energy,
+TAPG,Triputra Agro Persada Tbk,Consumer Non-Cyclicals,Y
+UNTR,United Tractors Tbk,Industrials,
+BBNI,Bank Negara Indonesia Tbk,Finance,
+KLBF,Kalbe Farma Tbk,Healthcare,
+ICBP,Indofood CBP Sukses Makmur Tbk,Consumer Non-Cyclicals,Y
+LSIP,PP London Sumatra Indonesia Tbk,Consumer Non-Cyclicals,Y
+TLKM,Telkom Indonesia (Persero) Tbk,Infrastructures,
+TKIM,Pabrik Kertas Tjiwi Kimia Tbk,Basic Materials,
+MYOR,Mayora Indah Tbk,Consumer Non-Cyclicals,Y
+DSNG,Dharma Satya Nusantara Tbk,Consumer Non-Cyclicals,Y
+BFIN,BFI Finance Indonesia Tbk,Finance,
+AADI,Adaro Andalan Indonesia Tbk,Energy,
+ASII,Astra International Tbk,Industrials,
+HMSP,Hanjaya Mandala Sampoerna Tbk,Consumer Non-Cyclicals,Y
+BBTN,Bank Tabungan Negara (Persero) Tbk,Finance,
+SIDO,Industri Jamu dan Farmasi Sido Muncul Tbk,Healthcare,
+BDMN,Bank Danamon Indonesia Tbk,Finance,
+RAJA,Rukun Raharja Tbk,Energy,
+UNVR,Unilever Indonesia Tbk,Consumer Non-Cyclicals,Y
+TOWR,Sarana Menara Nusantara Tbk,Infrastructures,
+CPIN,Charoen Pokphand Indonesia Tbk,Consumer Non-Cyclicals,Y
+RMKE,RMK Energy Tbk,Energy,
+MIKA,Mitra Keluarga Karyasehat Tbk,Healthcare,
+SCMA,Surya Citra Media Tbk,Consumer Cyclicals,
+MARK,Mark Dynamics Indonesia Tbk,Industrials,
+ADMR,Adaro Minerals Indonesia Tbk,Energy,
+JPFA,Japfa Comfeed Indonesia Tbk,Consumer Non-Cyclicals,Y
+CMRY,Cisarua Mountain Dairy Tbk,Consumer Non-Cyclicals,Y
+STAA,Sumber Tani Agung Resources Tbk,Consumer Non-Cyclicals,Y
+IMPC,Impack Pratama Industri Tbk,Industrials,
+AKRA,AKR Corporindo Tbk,Energy,
+DEWA,Darma Henwa Tbk,Energy,
+ISAT,Indosat Tbk,Infrastructures,
+DMAS,Puradelta Lestari Tbk,Property & Real Estate,
+EMTK,Elang Mahkota Teknologi Tbk,Technology,
+ENRG,Energi Mega Persada Tbk,Energy,
+PGEO,Pertamina Geothermal Energy Tbk,Infrastructures,
+INCO,Vale Indonesia Tbk,Basic Materials,
+INKP,Indah Kiat Pulp and Paper Tbk,Basic Materials,
+ESSA,ESSA Industries Indonesia Tbk,Basic Materials,
+AALI,Astra Agro Lestari Tbk,Consumer Non-Cyclicals,Y
+MAPI,Mitra Adiperkasa Tbk,Consumer Cyclicals,
+ANTM,Aneka Tambang Tbk,Basic Materials,

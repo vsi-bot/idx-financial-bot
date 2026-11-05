@@ -40,10 +40,13 @@ def run(ticker: str, force: bool = False) -> dict:
     for p, fid in folders:
         files = [f for f in st.list(fid) if not f["is_folder"] and not f["name"].startswith("_lama_")]
         xlsx = next((f for f in files if f["name"].lower().endswith(".xlsx")), None)
-        pdf = max((f for f in files if f["name"].lower().endswith(".pdf")), key=lambda f: f.get("size") or 0, default=None)
+        from bot2_extractor.presentation import extract as read_pres, is_presentation
+        pres = next((f for f in files if f["name"].lower().endswith(".pdf") and is_presentation(f["name"])), None)
+        pdf = max((f for f in files if f["name"].lower().endswith(".pdf") and not is_presentation(f["name"])),
+                  key=lambda f: f.get("size") or 0, default=None)
         if not xlsx:
             continue
-        sig = {"xlsx": xlsx.get("md5"), "pdf": pdf.get("md5") if pdf else None}
+        sig = {"xlsx": xlsx.get("md5"), "pdf": pdf.get("md5") if pdf else None, "pres": pres.get("md5") if pres else None}
         if not force and data["files"].get(p.key) == sig:
             continue
         local_x = cfg.WORK_DIR / f"{ticker}_{p.label}.xlsx"
@@ -77,6 +80,14 @@ def run(ticker: str, force: bool = False) -> dict:
             if not segments:
                 log.info("%s %s: tabel segmen di PDF tidak terbaca/tidak cocok, dilewati.", ticker, p.label)
         store.ingest(data, parsed, segments, sig)
+        if pres and parsed["template"].startswith("bank"):
+            local_s = cfg.WORK_DIR / f"{ticker}_{p.label}_pres.pdf"
+            st.download(pres["id"], local_s)
+            kpi = read_pres(local_s)
+            if kpi:
+                data["periods"][p.key]["presentation"] = kpi
+            else:
+                discord.status(f"{ticker} {p.label}: presentasi tidak memuat metrik yang terbaca dengan yakin.", "info")
         updated.append(p.key)
 
     if not data["periods"]:

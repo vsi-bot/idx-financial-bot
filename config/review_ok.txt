@@ -1,0 +1,2 @@
+# Daftar emiten yang tabelnya sudah ditinjau dan disetujui (satu kode per baris).
+# Dipakai untuk template selain industri umum & bank, mis. pembiayaan, properti.

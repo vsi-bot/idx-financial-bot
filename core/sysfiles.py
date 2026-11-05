@@ -14,7 +14,7 @@ from core import config as cfg
 from core.storage import get_storage
 
 log = logging.getLogger(__name__)
-EDITABLE = ["watchlist.csv", "style_guide.yaml", "catatan_analis.txt"]
+EDITABLE = ["watchlist.csv", "style_guide.yaml", "catatan_analis.txt", "review_ok.txt"]
 _cache: dict[str, str] = {}
 
 
@@ -34,8 +34,21 @@ def load_text(name: str) -> str:
 
 def watchlist() -> dict[str, dict]:
     rows = csv.DictReader(io.StringIO(load_text("watchlist.csv")))
-    return {r["ticker"].strip().upper(): {"nama": r["nama"].strip(), "sektor": r.get("sektor", "").strip()}
-            for r in rows if r.get("ticker")}
+    out = {}
+    for r in rows:
+        if not r.get("ticker"):
+            continue
+        sektor = (r.get("sektor") or "").strip()
+        mus = (r.get("musiman") or "").strip().upper()
+        out[r["ticker"].strip().upper()] = {"nama": r["nama"].strip(), "sektor": sektor,
+                                            # kolom kosong/tidak ada: bawaan musiman untuk consumer non-cyclicals
+                                            "musiman": mus in ("Y", "YA", "YES", "1") if "musiman" in r and r["musiman"] is not None
+                                            else sektor == "Consumer Non-Cyclicals"}
+    return out
+
+
+def review_ok() -> set[str]:
+    return {l.strip().upper() for l in load_text("review_ok.txt").splitlines() if l.strip() and not l.startswith("#")}
 
 
 def style_replacements() -> dict[str, str]:

@@ -8,12 +8,13 @@ from core.periods import Period
 log = logging.getLogger(__name__)
 
 IDX_RE = re.compile(r"FinancialStatement-(\d{4})-(I{1,3}|IV|Tahunan)-([A-Z]{4})", re.I)
-USER_RE = re.compile(r"(?<![A-Za-z])([A-Z]{4})[\s_\-]+((?i:1Q|2Q|3Q|4Q|FY))[\s_\-]*(\d{4}|\d{2})(?!\d)")
-PERIOD_ONLY_RE = re.compile(r"(?<![A-Za-z0-9])((?i:1Q|2Q|3Q|4Q|FY))[\s_\-]*(\d{4}|\d{2})(?!\d)")
+USER_RE = re.compile(r"(?<![A-Za-z])([A-Z]{4})[\s_\-]+((?i:1Q|2Q|3Q|4Q|FY|3M|6M|9M|12M|1H|H1))[\s_\-]*(\d{4}|\d{2})(?!\d)")
+PERIOD_ONLY_RE = re.compile(r"(?<![A-Za-z0-9])((?i:1Q|2Q|3Q|4Q|FY|3M|6M|9M|12M|1H|H1))[\s_\-]*(\d{4}|\d{2})(?!\d)")
 DATE_RE = re.compile(r"(31|30)[\s_\-]*(mar(?:et|ch)?|jun[ie]?|sep(?:t(?:ember)?)?|des(?:ember)?|dec(?:ember)?)"
                      r"[\s_\-,]*((?:20)?\d{2})(?!\d)", re.I)
 ROMAN = {"I": "tw1", "II": "tw2", "III": "tw3", "IV": "audit", "TAHUNAN": "audit"}
-PREFIX = {"1Q": "tw1", "2Q": "tw2", "3Q": "tw3", "4Q": "audit", "FY": "audit"}
+PREFIX = {"1Q": "tw1", "2Q": "tw2", "3Q": "tw3", "4Q": "audit", "FY": "audit",
+          "3M": "tw1", "6M": "tw2", "1H": "tw2", "H1": "tw2", "9M": "tw3", "12M": "audit"}
 MONTH = {"mar": "tw1", "jun": "tw2", "sep": "tw3", "des": "audit", "dec": "audit"}
 STOP = {"pt", "tbk", "persero", "the", "and", "dan"}
 

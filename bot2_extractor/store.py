@@ -44,5 +44,14 @@ def ingest(d: dict, parsed: dict, segments: dict | None, file_md5: dict) -> None
             entry[side][f"seg_rev::{nk}"] = vals["revenue"]
             if vals.get("profit") is not None:
                 entry[side][f"seg_profit::{nk}"] = vals["profit"]
+    entry["currency"] = parsed["currency"]
+    entry["fiscal_ok"] = parsed.get("fiscal_ok", True)
+    for side in ("cur", "prior"):                     # aset produktif bank (untuk estimasi NIM)
+        e = entry[side]
+        if "bs_loans" in e:
+            e["bs_earning_assets"] = e["bs_loans"] + (e.get("bs_ea_other") or 0)
+    old = d["periods"].get(parsed["period"], {})
+    if old.get("presentation"):
+        entry["presentation"] = old["presentation"]
     d["periods"][parsed["period"]] = entry
     d["files"][parsed["period"]] = file_md5

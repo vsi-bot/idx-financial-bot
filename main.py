@@ -98,6 +98,12 @@ def main():
             if tickers:
                 failed = cmd_process(args, tickers)
             cmd_send(args)
+    except Exception as e:
+        if any(w in str(e).lower() for w in ("quota", "too many times", "rate limit", "kuota")):
+            activity.add(f"Kuota layanan tercapai ({e}); dilanjutkan pada putaran berikutnya.", "warn")
+            failed = []
+        else:
+            raise
     finally:
         activity.flush(args.cmd + (f"_{args.tickers.replace(',', '-')}" if getattr(args, "tickers", None) else ""))
     if failed:

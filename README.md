@@ -193,3 +193,15 @@ Setiap kali kode `DriveBridge.gs` diubah, buat versi deployment baru (Deploy →
 - Banyak emiten dihitung paralel, lalu dikirim berurutan per emiten.
 - Laporan yang dulu terkirim tanpa data kuartalan otomatis dikirim ulang satu kali saat data lengkap.
 - Kamus pos laporan lintas sektor: `config/line_items.yaml`. Regression test: `tests/run_regression.py`.
+
+
+## Perubahan versi 3 (ringkas)
+
+- Narasi berbasis *fact registry*: setiap angka tercatat sumbernya; checker dua lapis sebelum kirim.
+- Format angka Indonesia (Rp783,6 miliar / Rp4,16 triliun). Label laba mengikuti hierarki baku.
+- Penggerak ditentukan nominal, jembatan laba otomatis, deteksi pos berpotensi sekali jadi, efek basis & emiten musiman.
+- Laporan yang ditahan dicatat di `_Sistem/NOTIFIKASI - PERLU DICEK.txt`.
+- Kasus khusus: rugi ke rugi, koreksi setelah terkirim, beda mata uang, tahun buku non-Desember, ekuitas negatif,
+  template baru (tinjau sekali lewat `_Sistem/review_ok.txt`), PDF tanpa Excel, kuota Apps Script.
+- Corporate presentation bank (opsional): nama file memuat "presentation/presentasi/investor", mis. `BBCA_9M26_presentation.pdf`.
+- Pengaturan baru di `config/settings.yaml` bagian `narrative`, `oneoff`, `review`.

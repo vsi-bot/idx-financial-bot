@@ -76,7 +76,8 @@ def run_checks(c, m, rows, store, period: Period, has_disc: bool) -> dict:
             parent = r
         elif r["kind"] == "section":
             parent = None
-        elif r["kind"] == "comp" and parent and r["label"].lower().startswith("lainnya") and \
+        elif r["kind"] == "comp" and parent and parent.get("key") not in ("non_operating", "noncore_income") and \
+                r["label"].lower().startswith("lainnya") and \
                 not r["label"].lower().startswith("lainnya &"):
             a_, b_ = r["vals"][1], parent["vals"][1]
             share = None if a_ is None or not b_ else abs(a_) / abs(b_)
@@ -117,19 +118,20 @@ def _anomalies(c, m, period: Period) -> list[str]:
             out.append(f"{nm} bergerak {g * 100:+.1f}% QoQ pada {period.q_label}")
     # margin di luar rentang beberapa kuartal terakhir
     n = A.get("margin_lookback_quarters", 4)
-    for num, nm in (("gross_profit", "GPM"), ("operating_profit", "OPM")):
+    for num, nm in (() if period.code == "audit" else (("gross_profit", "GPM"), ("operating_profit", "OPM"))):
         if num not in m or "revenue" not in m:
             continue
         cur = _q_margin(c, period, num)
-        hist, p = [], period
-        for _ in range(n):
+        window, p = [], period
+        for _ in range(n):                    # kuartal berurutan, satu basis (restated untuk tahun lalu)
             p = p.prev()
-            v = _q_margin(c, p, num)
-            if v is not None:
-                hist.append(v)
-        if cur is not None and len(hist) >= 3 and not (min(hist) <= cur <= max(hist)):
-            out.append(f"{nm} {period.q_label} sebesar {cur * 100:.1f}% berada di luar rentang {len(hist)} kuartal "
-                       f"terakhir ({min(hist) * 100:.1f}%-{max(hist) * 100:.1f}%)")
+            window.append((p, _q_margin(c, p, num, strict=True)))
+        if cur is None or any(v is None for _, v in window):
+            continue                          # histori tidak lengkap: anomali dilewati
+        vals = [v for _, v in window]
+        if not (min(vals) <= cur <= max(vals)):
+            out.append(f"{nm} {period.q_label} sebesar {cur * 100:.1f}% berada di luar rentang "
+                       f"{window[-1][0].q_label}–{window[0][0].q_label} ({min(vals) * 100:.1f}%–{max(vals) * 100:.1f}%)")
     g_ = (m.get("r_gross_profit") or {}).get("vals")
     o_ = (m.get("r_operating_profit") or {}).get("vals")
     if g_ and o_ and None not in (g_[3], g_[4], o_[3], o_[4]) and g_[4] < g_[3] and o_[4] > o_[3]:
@@ -141,8 +143,13 @@ def _anomalies(c, m, period: Period) -> list[str]:
     return out
 
 
-def _q_margin(c, p: Period, num):
-    a, b = c.q(p, num), c.q(p, "revenue")
+def _q_margin(c, p: Period, num, strict=False):
+    if not strict:
+        a, b = c.q(p, num), c.q(p, "revenue")
+    else:
+        vint = ("own", "next") if p.year >= c.p.year else ("next",)
+        a = next((x for v in vint if (x := c._q_strict(p, num, v)) is not None), None)
+        b = next((x for v in vint if (x := c._q_strict(p, "revenue", v)) is not None), None)
     return None if a is None or not b else a / b
 
 
@@ -165,4 +172,11 @@ def _footnotes(c, m, store, period: Period, has_disc: bool) -> list[str]:
         notes.append("n.m. on quarterly YoY: prior-year quarter not available on a comparable (restated) basis.")
     elif any(b == "as_reported" for b in c.basis.values()):
         notes.append("Prior-year quarter uses as-reported figures (no restatement detected).")
+    if period.code == "audit":
+        notes.append("4Q figures are derived as FY minus 9M and may include year-end audit adjustments.")
+    if getattr(c, "currency_mismatch", False):
+        notes.append("Some comparatives are not shown because the reporting currency changed.")
+    eq = c.bs(period, "bs_equity_parent")
+    if eq is not None and eq <= 0:
+        notes.append("Negative equity: equity-based ratios are not meaningful (n.m.).")
     return notes

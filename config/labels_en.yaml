@@ -4,6 +4,12 @@
 # Tambahkan baris di "exact" jika ada label yang terjemahannya kurang pas.
 # ============================================================
 exact:
+  "Pendapatan keuangan": "Finance income"
+  "Beban keuangan": "Finance costs"
+  "Selisih kurs": "FX gains (losses)"
+  "Bagian laba entitas asosiasi/ventura": "Share of associates & JVs"
+  "Penjualan aset & nilai wajar": "Asset disposals & fair value"
+  "Penurunan nilai": "Impairment"
   "Biaya tanah & bangunan (properti)": "Land & building costs (property)"
   "Lainnya": "Others"
   "Lainnya & eliminasi": "Others & eliminations"

@@ -1,648 +1,485 @@
-"""Mesin narasi berbasis aturan (tanpa AI, tanpa token).
-
-Alur: angka dari model tabel -> temuan (findings) -> kalimat formal dengan beberapa variasi.
-Variasi dipilih secara acak tapi konsisten per emiten & periode (seed), sehingga laporan
-antar-emiten tidak seragam namun hasilnya bisa direproduksi.
-"""
+"""Mesin narasi v3 (berbasis aturan, berbasis fakta). Semua angka lewat Facts; semua arah lewat direction()."""
 import random
 import re
 
 from core import config as cfg
-from core.fmt import growth, money, safe_div
 from core.periods import Period
+from bot3_narrator.facts import NM, Facts
 
-TH = cfg.ANALYSIS
-
-
-# ------------------------------------------------------------------ util bahasa
-def p1(x):
-    return f"{abs(x) * 100:.1f}%"
+N = cfg.SETTINGS.get("narrative", {})
+ONEOFF = cfg.SETTINGS.get("oneoff", {})
 
 
-def bps_txt(x):
-    return f"{abs(round(x * 10000)):,} bps"
+# ------------------------------------------------------------------ penentu arah (satu sumber)
+def direction(g=None, d_margin=None):
+    """'naik' / 'stabil' / 'turun' untuk pertumbuhan nominal (g) atau perubahan margin (d_margin)."""
+    if d_margin is not None:
+        lim = N.get("margin_flat_bps", 50) / 10000
+        return "stabil" if abs(d_margin) < lim else ("naik" if d_margin > 0 else "turun")
+    if g is None:
+        return None
+    return "stabil" if abs(g) * 100 < N.get("flat_pct", 1) else ("naik" if g > 0 else "turun")
 
 
-def lower_first(s):
-    return s[:1].lower() + s[1:] if s and not s[:2].isupper() else s
+def band(g):
+    a = abs(g) * 100
+    return "stabil" if a < N.get("flat_pct", 1) else "tipis" if a < N.get("thin_pct", 5) else \
+        "solid" if a < N.get("solid_pct", 15) else "kuat"
 
 
-class W:
-    """Penulis kalimat dengan pemilih variasi."""
-
-    def __init__(self, seed: str, currency: str):
-        self.r = random.Random(seed)
-        self.cur = currency
-
-    def pick(self, *opts):
-        return self.r.choice(opts)
-
-    def m(self, v):
-        return money(v, self.cur)
-
-    def up(self):
-        return self.pick("tumbuh", "meningkat", "naik")
-
-    def down(self):
-        return self.pick("turun", "terkoreksi", "melemah")
-
-    def move(self, g, suffix="YoY"):
-        """'tumbuh 9.7% YoY' / 'turun 3.1% YoY' / 'relatif stabil (+0.4% YoY)'."""
-        if g is None:
-            return None
-        if abs(g) * 100 < TH["flat_band_pct"] / 3:
-            return f"relatif stabil ({g * 100:+.1f}% {suffix})"
-        return f"{self.up() if g > 0 else self.down()} {p1(g)} {suffix}"
-
-    def to(self, g, v, cost=False, suffix="YoY"):
-        """'tumbuh 9.7% YoY menjadi Rp...' / 'relatif stabil di level Rp... (-0.8% YoY)'."""
-        if g is None:
-            return f"tercatat sebesar {self.m(v)}"
-        if abs(g) * 100 < TH["flat_band_pct"] / 3:
-            return f"relatif stabil di level {self.m(v)} ({g * 100:+.1f}% {suffix})"
-        if cost:
-            verb = self.pick("naik", "meningkat") if g > 0 else self.pick("turun", "menurun")
-        else:
-            verb = self.up() if g > 0 else self.down()
-        return f"{verb} {p1(g)} {suffix} menjadi {self.m(v)}"
-
-    def sym(self):
-        return "Rp" if self.cur == "IDR" else self.cur
+VERB = {("naik", "tipis"): "naik tipis", ("naik", "solid"): "tumbuh solid", ("naik", "kuat"): "tumbuh kuat",
+        ("turun", "tipis"): "turun tipis", ("turun", "solid"): "turun", ("turun", "kuat"): "turun signifikan"}
 
 
-def comp_name(name):
-    n = name.strip()
-    low = n.lower()
-    if low in ("lain-lain", "lainnya"):
-        return "pendapatan lain-lain"
-    if low.startswith(("penjualan", "pendapatan")):
-        return lower_first(n)
-    return "pendapatan " + lower_first(n)
+class Ctx:
+    def __init__(self, table, store, wl):
+        self.t, self.m, self.s = table, table["m"], store
+        self.p: Period = table["period"]
+        self.F = Facts(store["currency"], table)
+        self.r = random.Random(f"{store['ticker']}-{self.p.key}")
+        self.seasonal = bool((wl or {}).get("musiman"))
+        self.L = self.p.q_label if self.p.idx == 0 else self.p.cum_label
+        self.Lpy = self.p.same_last_year().q_label if self.p.idx == 0 else self.p.same_last_year().cum_label
+        self.watch = []                       # (prioritas, materialitas, teks)
 
-
-def cost_name(name):
-    n = name.strip()
-    low = n.lower()
-    if low.startswith(("beban", "biaya", "depresiasi", "amortisasi", "material", "bahan", "royalti", "tenaga")):
-        return lower_first(n)
-    return "biaya " + lower_first(n)
-
-
-def join_and(items):
-    items = [i for i in items if i]
-    if len(items) <= 1:
-        return "".join(items)
-    return ", ".join(items[:-1]) + " dan " + items[-1]
-
-
-# ------------------------------------------------------------------ akses metrik
-class M:
-    def __init__(self, table):
-        self.m = table["m"]
-        self.rows = table["rows"]
-
-    def v(self, key, i=1):
-        e = self.m.get(key)
+    def v(self, k, i=1):
+        e = self.m.get(k)
         return None if e is None else e["vals"][i]
 
-    def g(self, key, i=0):
-        e = self.m.get(key)
+    def g(self, k, i=0):
+        e = self.m.get(k)
         return None if e is None else e["growth"][i]
 
-    def comps(self, prefix, include_other=False):
-        out = []
-        for r in self.rows:
-            k = r.get("key") or ""
-            if not include_other and r["label"].lower().startswith("lainnya"):
-                continue
-            if r["kind"] == "comp" and k.startswith(prefix + "::") and not k.endswith("_residual"):
-                out.append(r)
-        return out
+    def pick(self, *o):
+        return self.r.choice(o)
+
+    def comps(self, prefix):
+        return [r for r in self.t["rows"] if r["kind"] == "comp" and (r.get("key") or "").startswith(prefix + "::")]
+
+    def rev_base(self):
+        return abs(self.v("revenue") or self.v("total_op_income") or 0) or 1
 
 
-# ------------------------------------------------------------------ narasi utama
-def build(table: dict, store: dict, note: str | None = None) -> tuple[str, list[str]]:
-    p: Period = table["period"]
-    tk = store["ticker"]
-    w = W(f"{tk}-{p.key}", store["currency"])
-    M_ = M(table)
-    if table["template"] == "general":
-        title, paras, watch = _general(w, M_, table, store, p)
+def say(fn):
+    try:
+        return fn()
+    except (NM, TypeError, ZeroDivisionError):
+        return None
+
+
+# ------------------------------------------------------------------ frasa pergerakan (sadar arah & tanda)
+def movement(c: Ctx, key, i_cur=1, i_base=0, gi=0, suffix="YoY", label_profit=False):
+    """Frasa pergerakan sebuah pos, aman untuk rugi/berbalik/n.m."""
+    F, cur, base = c.F, c.v(key, i_cur), c.v(key, i_base)
+    if cur is None:
+        raise NM()
+    if base is not None and (base < 0 or cur < 0):
+        if base < 0 and cur < 0:
+            arah = "menyempit" if abs(cur) < abs(base) else "melebar"
+            return f"mencatatkan rugi yang {arah} dari {F.money(base, (key, i_base))} menjadi {F.money(cur, (key, i_cur))}"
+        if base < 0 <= cur:
+            return f"berbalik dari rugi {F.money(base, (key, i_base))} menjadi laba {F.money(cur, (key, i_cur))}"
+        return f"berbalik dari laba {F.money(base, (key, i_base))} menjadi rugi {F.money(cur, (key, i_cur))}"
+    g = c.g(key, gi)
+    if g is None:
+        return f"tercatat sebesar {F.money(cur, (key, i_cur))}"
+    b = band(g)
+    if b == "stabil":
+        return f"relatif stabil di {F.money(cur, (key, i_cur))} ({F.pct(g, signed=True)} {suffix})"
+    return f"{VERB[(direction(g), b)]} {F.pct(g)} {suffix} menjadi {F.money(cur, (key, i_cur))}"
+
+
+def quarter_clause(c: Ctx, key, noun):
+    """Kalimat kuartalan dengan aturan efek basis & musiman."""
+    p, F = c.p, c.F
+    if p.idx == 0 or c.v(key, 4) is None:
+        return None
+    qoq, yoy = c.g(key, 1), c.g(key, 2)
+    parts = []
+    lim = N.get("base_effect_qoq_pct", 30) / 100
+    yoy_txt = f"{F.pct(yoy, signed=True)} YoY" if yoy is not None else None
+    qoq_txt = f"{F.pct(qoq, signed=True)} QoQ" if qoq is not None else None
+    order = [yoy_txt, qoq_txt] if c.seasonal else [qoq_txt, yoy_txt]
+    parts = [x for x in order if x]
+    txt = f"Secara kuartalan, {noun} {p.q_label} tercatat {F.money(c.v(key, 4), (key, 4))}"
+    txt += f" ({'; '.join(parts)})" if parts else ""
+    if qoq is not None and abs(qoq) > lim:
+        txt += (", sehingga perbandingan kuartalan kemungkinan dipengaruhi efek basis" if yoy is not None
+                else ", sementara pembanding tahunan tidak tersedia pada basis yang sebanding")
+    return txt + "."
+
+
+# ------------------------------------------------------------------ atribusi penggerak (nominal)
+def drivers(c: Ctx, prefix, total_key, noun):
+    F = c.F
+    tot_cur, tot_base = c.v(total_key), c.v(total_key, 0)
+    if tot_cur is None or tot_base is None:
+        return None
+    d_tot = tot_cur - tot_base
+    comps = [(r, (r["vals"][1] or 0) - (r["vals"][0] or 0)) for r in c.comps(prefix)
+             if r["vals"][1] is not None]
+    if not comps:
+        return None
+    if abs(d_tot) < abs(tot_base) * N.get("flat_pct", 1) / 100:
+        return f"Pergerakan komponen {noun} saling mengimbangi, sehingga totalnya relatif tidak berubah."
+    same = [(r, d) for r, d in comps if d and (d > 0) == (d_tot > 0)]
+    S = sum(d for _, d in same)
+    if not same or not S:
+        return None
+    same.sort(key=lambda x: -abs(x[1]))
+    word = "kenaikan" if d_tot > 0 else "penurunan"
+
+    def nm(r):
+        return "pos lain-lain yang tidak dirinci di laporan" if r["label"].lower().startswith("lainnya") \
+            else r["label"][:1].lower() + r["label"][1:]
+    r0, d0 = same[0]
+    if d0 / S > N.get("driver_main_share", 0.5):
+        txt = (f"{word.capitalize()} {noun} terutama berasal dari {nm(r0)} sebesar {F.money(d0, how='delta')}, "
+               f"atau {F.share(d0 / S)} dari total {word} searah")
+        g0 = r0["growth"][0]
+        if g0 is not None and abs(r0["vals"][1] or 0) >= c.rev_base() * N.get("immaterial_pct", 1) / 100 \
+                and not r0["round_note"]:
+            txt += f" ({F.pct(g0, signed=True)} YoY)"
+        return txt + "."
+    tops = same[:2]
+    lst = " dan ".join(f"{nm(r)} ({F.share(d / S)})" for r, d in tops)
+    return f"{word.capitalize()} {noun} tersebar, dengan kontributor terbesar {lst} dari total {word} searah."
+
+
+# ------------------------------------------------------------------ pos sekali jadi & jembatan laba
+def oneoffs(c: Ctx, prefix):
+    F, out = c.F, []
+    groups = set(ONEOFF.get("groups", []))
+    skip = set((ONEOFF.get("exceptions") or {}).get(c.s["ticker"], []))
+    pbt = abs(c.v("pbt") or 0)
+    for r in c.comps(prefix):
+        if r["label"] not in groups or r["label"] in skip:
+            continue
+        cur, py = r["vals"][1], r["vals"][0]
+        if cur is None or not pbt:
+            continue
+        if abs(cur) >= N.get("oneoff_pbt_share", 0.1) * pbt and (py in (None, 0) or abs(cur) >= N.get("oneoff_jump", 1.5) * abs(py)):
+            kind = "pendapatan" if cur > 0 else "beban"
+            name = "pos lain-lain" if r["label"].lower().startswith("lainnya") else r["label"].lower()
+            txt = f"{kind} dari {name} sebesar {F.money(cur, (r['key'], 1))}"
+            out.append((abs(cur), txt))
+    return out
+
+
+def bridge(c: Ctx, bank=False):
+    """Jembatan laba nominal; kembalikan (kalimat, kontributor) atau (None, [])."""
+    F = c.F
+    np_key = "net_profit"
+    g_np = c.g(np_key)
+    base_key = "ppop" if bank else "operating_profit"
+    g_base = c.g(base_key)
+    diverge = (g_np is None) != (g_base is None) or (
+        g_np is not None and g_base is not None and abs(g_np - g_base) * 100 > N.get("bridge_gap_pp", 5))
+    if not diverge:
+        return None, []
+
+    def d(k, sign=1):
+        a, b = c.v(k), c.v(k, 0)
+        return None if a is None or b is None else sign * (a - b)
+    parts = [("laba operasional sebelum pencadangan" if bank else "laba operasional", d(base_key))]
+    if bank:
+        parts.append(("beban pencadangan", d("provision", -1)))
+        parts.append(("pos operasional lainnya", d("other_op_net") if c.v("other_op_net") is not None else None))
+    parts += [("pos non-operasi bersih", d("non_operating")), ("beban pajak", d("tax", -1)),
+              ("kepentingan nonpengendali", d("np_nci", -1))]
+    parts = [(n, x) for n, x in parts if x]
+    target = d(np_key)
+    if target is None or not parts:
+        return None, []
+    tol = max(abs(c.v(np_key) or 0) * 0.01, 0.1 * (1e9 if c.s["currency"] == "IDR" else 1e6))
+    if abs(sum(x for _, x in parts) - target) > tol:
+        raise ValueError("jembatan laba tidak menjumlah")
+    others = sorted([p for p in parts if not p[0].startswith("laba operasional")], key=lambda x: -abs(x[1]))
+    def desc(n, x):
+        t = f"{n} yang {'menambah' if x > 0 else 'mengurangi'} laba sebesar {F.money(x, how='delta')}"
+        a0, a1 = c.v("non_operating", 0), c.v("non_operating")
+        if n == "pos non-operasi bersih" and a0 is not None and a1 is not None and (a0 < 0) != (a1 < 0):
+            k = lambda v: "pendapatan bersih" if v > 0 else "beban bersih"  # noqa: E731
+            t += f" (berbalik dari {k(a0)} {F.money(a0, ('non_operating', 0))} menjadi {k(a1)} {F.money(a1, ('non_operating', 1))})"
+        return t
+    items = [desc(n, x) for n, x in others[:3]]
+    lst = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " dan " + items[-1]
+    gb = say(lambda: F.pct(g_base, signed=True)) or "tidak sebanding"
+    gn = say(lambda: F.pct(g_np, signed=True)) or "tidak sebanding"
+    txt = (f"Laju {c.F.label(np_key)} ({gn} YoY) berbeda dari "
+           f"{'PPOP' if bank else 'laba operasional'} ({gb} YoY). Selisih tersebut dijelaskan oleh {lst}.")
+    nonop_share = sum(abs(x) for n, x in others if n.startswith(("pos non-operasi", "pos operasional lainnya")))
+    if others and nonop_share >= abs(others[0][1]) * 0.99 and nonop_share > 0:
+        txt += " Karena kontributor terbesarnya berasal dari pos non-operasi, keberlanjutan laba ini perlu dicermati."
+    elif bank and others and others[0][0] == "beban pencadangan":
+        txt += " Pertumbuhan laba terutama ditopang penurunan beban pencadangan, bukan sepenuhnya dari bisnis inti."
+    elif others and others[0][0] == "beban pajak" and others[0][1] < 0:
+        txt += " Selisih terutama mencerminkan beban pajak yang lebih tinggi, bukan pelemahan kinerja operasional."
     else:
-        title, paras, watch = _bank(w, M_, table, store, p)
-    anomalies = list(table.get("anomalies") or [])
-    if anomalies:                              # anomali didahulukan di daftar yang perlu dicermati
-        watch = list(dict.fromkeys(anomalies[:2] + watch))
-        paras[-1] = _watch(watch, p)
-    disc = _discontinued(w, M_, table, p)
-    if disc:
-        paras.insert(1, disc)
-    paras.insert(0, _summary(w, M_, table, p, watch))
+        txt += " Kontributor tersebut berasal dari pos yang lazim berulang, sehingga kualitas laba relatif terjaga."
+    return txt, others
+
+
+# ================================================================== NONBANK
+def _general(c: Ctx):
+    F, tk, L = c.F, c.s["ticker"], c.L
+    paras = []
+    # judul
+    dr, dn = direction(c.g("revenue")), direction(c.g("net_profit"))
+    d_opm = None if None in (c.v("r_operating_profit"), c.v("r_operating_profit", 0)) else \
+        c.v("r_operating_profit") - c.v("r_operating_profit", 0)
+    dm = direction(d_margin=d_opm) if d_opm is not None else None
+    a = {"naik": f"Pendapatan Tumbuh {band(c.g('revenue')).capitalize()}" if c.g("revenue") else "Pendapatan Naik",
+         "stabil": "Pendapatan Relatif Stabil", "turun": "Pendapatan Melemah", None: "Kinerja Pendapatan"}[dr]
+    if dr == "naik" and band(c.g("revenue")) == "tipis":
+        a = "Pendapatan Naik Tipis"
+    b = {"naik": "Profitabilitas Membaik", "stabil": "Profitabilitas Terjaga", "turun": "Margin Tertekan",
+         None: "Profitabilitas Perlu Dicermati"}[dm]
+    title = f"{tk} {c.p.label}: {a}, {b}"
+
+    # P1 headline
+    s1 = say(lambda: f"{tk} membukukan pendapatan {L} yang {movement(c, 'revenue')}.")
+    s2 = say(lambda: quarter_clause(c, "revenue", "pendapatan"))
+    s3 = say(lambda: f"Di level bottom-line, {F.label('net_profit')} {movement(c, 'net_profit', label_profit=True)}.")
+    rep = c.m.get("net_profit_reported")
+    s4 = None
+    if rep:
+        s4 = say(lambda: (f"Angka tersebut tidak termasuk {F.label('np_disc')} sebesar {F.money(c.v('np_disc'), ('np_disc', 1))}; "
+                          f"secara dilaporkan, {F.label('net_profit_reported')} {movement(c, 'net_profit_reported')}."))
+    paras.append(" ".join(x for x in (s1, s2, s3, s4) if x))
+
+    # P2 penggerak pendapatan + segmen
+    p2 = [say(lambda: drivers(c, "rev_seg", "revenue", "pendapatan"))]
+    new = [r for r in c.comps("rev_seg") if r["vals"][0] in (None, 0) and (r["vals"][1] or 0) > 0]
+    for r in new[:1]:
+        p2.append(say(lambda: f"Pendapatan {r['label'][:1].lower() + r['label'][1:]} mulai berkontribusi sebesar "
+                              f"{F.money(r['vals'][1], (r['key'], 1))}, sehingga sebagian pertumbuhan kemungkinan bersifat anorganik."))
+        c.watch.append((3, abs(r["vals"][1]), f"kontribusi lanjutan {r['label'].lower()}"))
+    losers = [r for r in c.comps("seg_profit") if (r["vals"][1] or 0) < 0 and not r["label"].lower().startswith("lainnya")]
+    for r in losers[:2]:
+        p2.append(say(lambda: f"Dari sisi segmen, {r['label']} masih mencatatkan rugi sebesar {F.money(r['vals'][1], (r['key'], 1))}."))
+        c.watch.append((2, abs(r["vals"][1]), f"kinerja segmen {r['label']} yang masih merugi"))
+    paras.append(" ".join(x for x in p2 if x) or None)
+
+    # P3 biaya
+    p3 = [say(lambda: f"Dari sisi biaya, beban pokok pendapatan {movement(c, 'cogs')}."),
+          say(lambda: drivers(c, "cogs_comp", "cogs", "beban pokok"))]
+    ro, ro0 = c.m.get("r_opex", {}).get("vals", [None] * 5)[1], c.m.get("r_opex", {}).get("vals", [None] * 5)[0]
+    if ro is not None and ro0 is not None and abs(ro - ro0) >= 0.005:
+        p3.append(say(lambda: f"Beban usaha {movement(c, 'opex')}, dengan rasio terhadap pendapatan "
+                              f"{'meningkat' if ro > ro0 else 'menurun'} ({F.bps(ro - ro0)})."))
+    if c.p.idx > 0 and None not in (c.v("revenue", 4), c.v("revenue", 3), c.v("gross_profit", 4), c.v("gross_profit", 3)):
+        dr_q = c.v("revenue", 4) - c.v("revenue", 3)
+        dg_q = c.v("gross_profit", 4) - c.v("gross_profit", 3)
+        if dr_q > 0 and dg_q <= 0:
+            p3.append(say(lambda: f"Secara kuartalan, kenaikan pendapatan sebesar {F.money(dr_q, how='delta')} dibanding "
+                                  f"{c.p.prev().q_label} sepenuhnya tergerus kenaikan beban pokok, sehingga laba kotor "
+                                  f"{'turun' if dg_q < 0 else 'tidak bertambah'}."))
+    paras.append(" ".join(x for x in p3 if x) or None)
+
+    # P4 margin GPM -> OPM -> NPM
+    p4, deltas = [], {}
+    for k, nm in (("r_gross_profit", "gross profit margin"), ("r_operating_profit", "operating profit margin"),
+                  ("r_net_profit", "net profit margin")):
+        cur, base = c.v(k), c.v(k, 0)
+        if cur is None or base is None:
+            continue
+        deltas[nm] = cur - base
+        p4.append(f"{nm} {F.level(cur, (k, 1))} ({F.bps(cur - base)})")
+    if p4:
+        txt = "Dari sisi profitabilitas, " + ", ".join(p4) + f" dibanding {c.Lpy}."
+        neg = {k: v for k, v in deltas.items() if v < 0}
+        if neg:
+            lvl = min(neg, key=neg.get)
+            txt += f" Tekanan terbesar terjadi di level {lvl}."
+        paras.append(txt)
+    d_rev = None if None in (c.v("revenue"), c.v("revenue", 0)) else c.v("revenue") - c.v("revenue", 0)
+    if d_rev and c.v("revenue", 0) and abs(d_rev) / abs(c.v("revenue", 0)) * 100 > N.get("incremental_min_pct", 2) and d_rev > 0:
+        dgp = None if None in (c.v("gross_profit"), c.v("gross_profit", 0)) else c.v("gross_profit") - c.v("gross_profit", 0)
+        if dgp is not None:
+            if dgp <= 0:
+                paras.append(f"Kenaikan pendapatan sebesar {F.money(d_rev, how='delta')} sepenuhnya tergerus oleh kenaikan beban pokok.")
+            elif dgp / d_rev < 0.1:
+                paras.append(f"Kenaikan pendapatan sebesar {F.money(d_rev, how='delta')} hampir sepenuhnya tergerus oleh kenaikan beban pokok.")
+            else:
+                paras.append(f"Secara inkremental, sekitar {F.share(dgp / d_rev)} dari tambahan pendapatan menjadi laba kotor.")
+
+    # P5 jembatan laba + sekali jadi
+    p5 = []
+    try:
+        btxt, _ = bridge(c)
+    except ValueError:
+        raise
+    if btxt:
+        p5.append(btxt)
+    for amt, txt in oneoffs(c, "nonop_comp"):
+        p5.append(f"Perlu dicermati, laba periode ini turut dipengaruhi {txt} yang berpotensi tidak berulang.")
+        c.watch.append((1, amt, f"keberlanjutan {txt.split(' sebesar')[0]}"))
+    etr, etr0 = c.v("r_etr"), c.v("r_etr", 0)
+    if etr is not None and etr0 is not None and abs(etr - etr0) >= 0.03:
+        c.watch.append((1, abs((c.v("tax") or 0) - (c.v("tax", 0) or 0)),
+                        f"arah tarif pajak efektif yang bergerak dari {F.level(etr0, ('r_etr', 0))} menjadi {F.level(etr, ('r_etr', 1))}"))
+    paras.append(" ".join(p5) or None)
+
+    # P6 neraca
+    nd, nd0 = c.v("bs_net_debt"), c.v("bs_net_debt", 0)
+    if nd is not None:
+        kind = "kas bersih" if nd < 0 else "utang bersih"
+        if nd0 is not None and (nd0 < 0) != (nd < 0):
+            k0 = "kas bersih" if nd0 < 0 else "utang bersih"
+            paras.append(f"Posisi neraca berbalik dari {k0} {F.money(nd0, ('bs_net_debt', 0))} menjadi {kind} {F.money(nd, ('bs_net_debt', 1))}.")
+        else:
+            nde = c.v("r_nde")
+            paras.append(f"Dari sisi neraca, perseroan berada pada posisi {kind} sebesar {F.money(nd, ('bs_net_debt', 1))}"
+                         + (f" ({F.share(abs(nde))} dari ekuitas)." if nde is not None else "."))
+    ta = c.g("bs_total_assets", 0)
+    if ta is not None and ta > N.get("inorganic_asset_jump", 0.3):
+        c.watch.append((3, 0, "kemungkinan kontribusi anorganik seiring kenaikan total aset yang signifikan"))
+
+    # P7 kesimpulan dari matriks
+    paras.append(conclusion(c, dr, dm, dn, bool(btxt)))
+    # margin pressure watch
+    if d_opm is not None and dm == "turun":
+        c.watch.append((2, abs(d_opm) * abs(c.v("revenue") or 0), f"pemulihan operating profit margin setelah turun {F.bps(d_opm, signed=False)}"))
+    return title, paras
+
+
+# ================================================================== BANK
+def _bank(c: Ctx):
+    F, tk, L = c.F, c.s["ticker"], c.L
+    sharia = c.t["template"] == "bank_sharia"
+    loan, ldr = ("pembiayaan", "FDR") if sharia else ("kredit", "LDR")
+    nii_lbl = "pendapatan margin dan bagi hasil bersih" if sharia else "pendapatan bunga bersih (NII)"
+    dr, dn = direction(c.g("total_op_income")), direction(c.g("net_profit"))
+    d_cir = None if None in (c.v("r_cir"), c.v("r_cir", 0)) else c.v("r_cir") - c.v("r_cir", 0)
+    dm = direction(d_margin=-d_cir) if d_cir is not None else None        # CIR turun = efisiensi membaik
+    title = f"{tk} {c.p.label}: " + {"naik": "Laba Bersih Tumbuh", "stabil": "Laba Bersih Relatif Stabil",
+                                      "turun": "Laba Bersih Melemah", None: "Kinerja Laba"}[dn]
+    paras = []
+    p1 = [say(lambda: f"{tk} membukukan {F.label('net_profit')} {L} yang {movement(c, 'net_profit')}."),
+          say(lambda: f"Pendapatan operasional bank (NII ditambah pendapatan non-bunga) {movement(c, 'total_op_income')}, "
+                      f"dengan {nii_lbl} {movement(c, 'nii')}."),
+          say(lambda: quarter_clause(c, "net_profit", "laba bersih"))]
+    nim, nim0 = c.v("r_nim"), c.v("r_nim", 0)
+    if nim is not None and nim0 is not None:
+        p1.append(f"NIM (estimasi dari aset produktif) tercatat {F.level(nim, ('r_nim', 1))} ({F.bps(nim - nim0)} YoY).")
+    paras.append(" ".join(x for x in p1 if x))
+    paras.append(say(lambda: drivers(c, "noncore_comp", "noncore_income", "pendapatan non-bunga")))
+    p3 = [say(lambda: f"Beban operasional {movement(c, 'opex')}" + (f", sehingga CIR {'meningkat' if d_cir > 0 else 'membaik'} "
+                                                                    f"menjadi {F.level(c.v('r_cir'), ('r_cir', 1))} ({F.bps(d_cir)})." if d_cir is not None else ".")),
+          say(lambda: f"Laba operasional sebelum pencadangan (PPOP) {movement(c, 'ppop')}."),
+          say(lambda: f"Beban pencadangan {movement(c, 'provision')}" + (f", dengan cost of credit {F.level(c.v('r_coc'), ('r_coc', 1))}." if c.v('r_coc') is not None else "."))]
+    paras.append(" ".join(x for x in p3 if x))
+    btxt, others = bridge(c, bank=True)
+    p4 = [btxt] if btxt else []
+    for amt, txt in oneoffs(c, "noncore_comp"):
+        p4.append(f"Perlu dicermati, pendapatan periode ini turut dipengaruhi {txt} yang berpotensi tidak berulang.")
+        c.watch.append((3, amt, f"keberlanjutan {txt.split(' sebesar')[0]}"))
+    if others and others[0][0] == "beban pencadangan":
+        c.watch.append((2, abs(others[0][1]), "keberlanjutan beban pencadangan yang rendah"))
+    paras.append(" ".join(p4) or None)
+    p5 = [say(lambda: f"Dari sisi neraca, {loan} {movement(c, 'bs_loans', gi=2)}"
+                      + (f" ({F.pct(c.m['ytd_loans'], signed=True)} YtD)" if c.m.get('ytd_loans') is not None else "") + "."),
+          say(lambda: f"Dana pihak ketiga {movement(c, 'bs_deposits', gi=2)}, dengan CASA ratio {F.level(c.v('r_casa'), ('r_casa', 1))} "
+                      f"dan {ldr} {F.level(c.v('r_ldr'), ('r_ldr', 1))}.")]
+    paras.append(" ".join(x for x in p5 if x) or None)
+    aq = [f"{lbl} {F.level(c.v(k), (k, 1))}" for k, lbl in (("p_npl", "NPL"), ("p_lar", "LAR"), ("p_coverage", "coverage NPL"),
+                                                             ("p_car", "CAR")) if c.v(k) is not None]
+    if aq:
+        paras.append("Berdasarkan presentasi perusahaan, " + ", ".join(aq) + ".")
+        npl, npl0 = c.v("p_npl"), c.v("p_npl", 0)
+        if npl is not None and npl0 is not None and npl > npl0:
+            c.watch.append((0, 1e30, f"kualitas aset seiring NPL naik {F.bps(npl - npl0, signed=False)} YoY"))
+    gcc, gci = c.g("core_cost"), c.g("core_income")
+    if gcc is not None and gci is not None and gcc > gci:
+        c.watch.append((1, abs((c.v("core_cost") or 0) - (c.v("core_cost", 0) or 0)), "biaya dana yang tumbuh lebih cepat dari pendapatan inti"))
+    if d_cir is not None and d_cir > 0.02:
+        c.watch.append((3, 0, f"disiplin biaya operasional setelah CIR meningkat {F.bps(d_cir, signed=False)}"))
+    paras.append(conclusion(c, dr, dm, dn, bool(btxt), bank=True))
+    return title, paras
+
+
+# ------------------------------------------------------------------ kesimpulan (matriks)
+BASE = {("naik", "naik"): "pertumbuhan terjadi di level pendapatan maupun laba",
+        ("naik", "stabil"): "pertumbuhan pendapatan belum diterjemahkan menjadi pertumbuhan laba",
+        ("naik", "turun"): "pertumbuhan pendapatan tidak diikuti laba yang justru turun",
+        ("stabil", "naik"): "laba tumbuh di tengah pendapatan yang relatif stabil",
+        ("stabil", "stabil"): "kinerja relatif stabil di level pendapatan maupun laba",
+        ("stabil", "turun"): "laba turun di tengah pendapatan yang relatif stabil",
+        ("turun", "naik"): "laba tetap tumbuh meski pendapatan turun",
+        ("turun", "stabil"): "laba relatif terjaga meski pendapatan turun",
+        ("turun", "turun"): "kinerja melemah di level pendapatan maupun laba"}
+MARGIN = {"naik": "dengan profitabilitas operasional yang membaik", "stabil": "dengan profitabilitas operasional yang terjaga",
+          "turun": "dengan profitabilitas operasional yang menyempit"}
+
+
+def conclusion(c: Ctx, dr, dm, dn, bridged, bank=False):
+    if dr is None or dn is None:
+        return f"Secara keseluruhan, sebagian pembanding {c.L} tidak tersedia pada basis yang sebanding, sehingga kesimpulan difokuskan pada level kinerja periode berjalan."
+    txt = f"Secara keseluruhan, {BASE[(dr, dn)]}"
+    if dm:
+        txt += " " + ({"naik": "dengan efisiensi biaya yang membaik", "stabil": "dengan efisiensi biaya yang terjaga",
+                        "turun": "dengan efisiensi biaya yang melemah"}[dm] if bank else MARGIN[dm])
+    txt += "."
+    op_dir = direction(c.g("ppop" if bank else "operating_profit"))
+    if bridged and op_dir and op_dir != dn:
+        txt += f" Arah laba bersih berbeda dengan arah {'PPOP' if bank else 'laba operasional'}, sehingga perubahan laba terutama berasal dari pos di bawahnya."
+    return txt
+
+
+# ------------------------------------------------------------------ ringkasan & watch items
+def summary(c: Ctx, top_watch):
+    F, bank = c.F, c.t["template"] != "general"
+    L = c.L
+    b = []
+    if not bank:
+        b.append(say(lambda: f"**Kinerja:** pendapatan {F.money(c.v('revenue'), ('revenue', 1))} ({F.pct(c.g('revenue'), signed=True)} YoY); "
+                             f"{F.label('net_profit')} {F.money(c.v('net_profit'), ('net_profit', 1))}"
+                             + (f" ({F.pct(c.g('net_profit'), signed=True)} YoY)." if c.g('net_profit') is not None else ".")))
+        mg = [f"{nm} {F.level(c.v(k), (k, 1))}" + (f" ({F.bps(c.v(k) - c.v(k, 0))})" if c.v(k, 0) is not None else "")
+              for k, nm in (("r_gross_profit", "GPM"), ("r_operating_profit", "OPM"), ("r_net_profit", "NPM")) if c.v(k) is not None]
+        roe = say(lambda: f"ROE {F.level(c.v('r_roe'), ('r_roe', 1))}")
+        b.append("**Profitabilitas:** " + ", ".join(mg + ([roe] if roe else [])) + "." if mg else None)
+    else:
+        b.append(say(lambda: f"**Kinerja:** {F.label('net_profit')} {F.money(c.v('net_profit'), ('net_profit', 1))} "
+                             f"({F.pct(c.g('net_profit'), signed=True)} YoY); pendapatan operasional {F.pct(c.g('total_op_income'), signed=True)} YoY."))
+        ef = [say(lambda: f"ROE {F.level(c.v('r_roe'), ('r_roe', 1))}"), say(lambda: f"CIR {F.level(c.v('r_cir'), ('r_cir', 1))}"),
+              say(lambda: f"cost of credit {F.level(c.v('r_coc'), ('r_coc', 1))}"), say(lambda: f"NIM (est.) {F.level(c.v('r_nim'), ('r_nim', 1))}")]
+        ef = [x for x in ef if x]
+        b.append("**Profitabilitas & efisiensi:** " + ", ".join(ef) + "." if ef else None)
+    if top_watch:
+        b.append(f"**Perlu dicermati:** {top_watch}.")
+    return f"**Ringkasan {L}**\n" + "\n".join("• " + x for x in b if x)
+
+
+def watch_paragraph(c: Ctx, items):
+    if not items:
+        return None
+    nxt = c.p.next().label
+    return f"Hal yang perlu dicermati pada {nxt}: " + "; ".join(f"({i}) {t}" for i, t in enumerate(items, 1)) + "."
+
+
+# ------------------------------------------------------------------ utama
+def build(table, store, note=None, wl=None):
+    c = Ctx(table, store, wl)
+    title, paras = (_general if table["template"] == "general" else _bank)(c)
+    for a in table.get("anomalies") or []:
+        c.watch.append((2, 0, a))
+    ranked = sorted(dict(((t, (pr, -mat)) for pr, mat, t in c.watch)).items(), key=lambda x: x[1])
+    items = [t for t, _ in ranked]
+    top, rest = (items[0] if items else None), items[1:5]
+    paras = [p for p in paras if p]
     if note:
-        paras.insert(-1, note.strip())
-    return title, [_polish(x) for x in paras if x]
+        paras.append(note.strip())
+    paras.append(watch_paragraph(c, rest))
+    paras.insert(0, summary(c, top))
+    paras = [_polish(p) for p in paras if p]
+    return title, paras, c.F
 
 
 def _polish(text: str) -> str:
     from core.sysfiles import style_replacements
     for bad, good in style_replacements().items():
         text = re.sub(re.escape(bad), good, text, flags=re.I)
-    text = re.sub(r"[ \t]{2,}", " ", text).replace(" ,", ",").replace(" .", ".")
-    return text.strip()
-
-
-def _labels(p: Period):
-    L = p.q_label if p.idx == 0 else p.cum_label
-    L_py = p.same_last_year().q_label if p.idx == 0 else p.same_last_year().cum_label
-    return L, L_py
-
-
-def _quarter_sentence(w, M_, key, name, p: Period):
-    if p.idx == 0:
-        return None
-    q, qoq, yoy = M_.v(key, 4), M_.g(key, 1), M_.g(key, 2)
-    if q is None:
-        return None
-    parts = [f"{qoq * 100:+.1f}% QoQ" if qoq is not None else None, f"{yoy * 100:+.1f}% YoY" if yoy is not None else None]
-    tail = f" ({'; '.join(x for x in parts if x)})" if any(parts) else ""
-    return w.pick(f"Secara kuartalan, {name} {p.q_label} tercatat sebesar {w.m(q)}{tail}.",
-                  f"Pada kuartal {p.q_label} saja, {name} mencapai {w.m(q)}{tail}.",
-                  f"Untuk {p.q_label} secara terpisah, {name} tercatat {w.m(q)}{tail}.")
-
-
-# ================================================================== INDUSTRI UMUM
-def _general(w: W, M_: M, table, store, p: Period):
-    tk = store["ticker"]
-    L, L_py = _labels(p)
-    rev, rev_py, g_rev = M_.v("revenue"), M_.v("revenue", 0), M_.g("revenue")
-    np_, g_np = M_.v("net_profit"), M_.g("net_profit")
-    opm, opm_py = M_.v("r_operating_profit"), M_.v("r_operating_profit", 0)
-    gpm, gpm_py = M_.v("r_gross_profit"), M_.v("r_gross_profit", 0)
-    etr, etr_py = M_.v("r_etr"), M_.v("r_etr", 0)
-    d_opm = None if None in (opm, opm_py) else opm - opm_py
-    d_gpm = None if None in (gpm, gpm_py) else gpm - gpm_py
-    d_etr = None if None in (etr, etr_py) else etr - etr_py
-    tax_flag = d_etr is not None and d_etr * 100 >= TH["tax_jump_pp"]
-    margin_bps = TH["margin_move_bps"] / 10000
-    watch = []
-
-    # ---------- judul
-    if g_rev is None:
-        a = "Kinerja Pendapatan"
-    elif g_rev * 100 >= TH["strong_growth_pct"]:
-        a = "Pertumbuhan Pendapatan Solid"
-    elif g_rev * 100 >= TH["flat_band_pct"]:
-        a = "Pendapatan Tumbuh Moderat"
-    elif g_rev * 100 > -TH["flat_band_pct"]:
-        a = "Pendapatan Relatif Stabil"
-    else:
-        a = "Pendapatan Terkoreksi"
-    og = M_.g("operating_profit")
-    if tax_flag and g_np is not None and og is not None and g_np < og - 0.05:
-        b = "Laba Bersih Tertahan Kenaikan Beban Pajak"
-    elif d_opm is not None and d_opm >= margin_bps:
-        b = "Profitabilitas Membaik"
-    elif d_opm is not None and d_opm <= -margin_bps:
-        b = "Tekanan Margin Menjadi Perhatian"
-    else:
-        b = "Profitabilitas Terjaga"
-    title = f"{tk} {p.label}: {a}, {b}"
-
-    # ---------- P1 headline
-    mv = w.move(g_rev)
-    s1 = w.pick(
-        f"{tk} membukukan pendapatan sebesar {w.m(rev)} pada {L}, {mv} dari {w.m(rev_py)} pada {L_py}.",
-        f"Pada {L}, {tk} mencatatkan pendapatan sebesar {w.m(rev)}, {mv} dibandingkan {L_py}.",
-        f"Pendapatan {tk} pada {L} tercatat sebesar {w.m(rev)}, {mv} dari {w.m(rev_py)} pada periode yang sama tahun lalu.",
-    ) if mv else f"{tk} membukukan pendapatan sebesar {w.m(rev)} pada {L}."
-    s2 = _quarter_sentence(w, M_, "revenue", "pendapatan", p)
-    s3 = None
-    if np_ is not None:
-        npmv = w.to(g_np, np_) if g_np is not None else (f"berbalik menjadi laba sebesar {w.m(np_)}" if np_ > 0
-                                                          else f"mencatatkan rugi sebesar {w.m(abs(np_))}")
-        rel = ""
-        if g_np is not None and g_rev is not None:
-            if g_np > g_rev + 0.02:
-                rel = w.pick(", tumbuh lebih cepat dibandingkan pendapatan", ", melampaui laju pertumbuhan pendapatan")
-            elif g_np < g_rev - 0.02:
-                rel = w.pick(", lebih lambat dibandingkan laju pertumbuhan pendapatan",
-                             ", tertinggal dari laju pertumbuhan pendapatan")
-        s3 = (f"Di level bottom-line, laba bersih yang dapat diatribusikan kepada pemilik entitas induk "
-              f"{npmv}{rel}.")
-    verdict = _verdict(w, g_rev, g_np, L)
-    para1 = " ".join(x for x in (s1, s2, s3, verdict) if x)
-
-    # ---------- P2 komposisi pendapatan
-    para2 = _composition(w, M_, rev, rev_py, L_py, watch)
-
-    # ---------- P3 biaya
-    para3 = _costs_general(w, M_, g_rev, rev, rev_py, p, watch)
-
-    # ---------- P4 profitabilitas
-    s = []
-    gp, g_gp = M_.v("gross_profit"), M_.g("gross_profit")
-    if gp is not None and gpm is not None:
-        dir_ = ("membaik" if d_gpm and d_gpm > 0 else "menyempit") if d_gpm is not None else ""
-        s.append(f"Laba kotor {w.to(g_gp, gp)}, dengan gross profit margin {dir_} "
-                 f"menjadi {gpm * 100:.1f}% (vs. {gpm_py * 100:.1f}% pada {L_py}; "
-                 f"{'+' if d_gpm >= 0 else '-'}{bps_txt(d_gpm)})." if d_gpm is not None else
-                 f"Laba kotor tercatat sebesar {w.m(gp)} dengan gross profit margin {gpm * 100:.1f}%.")
-        if d_gpm is not None and abs(d_gpm) >= margin_bps:
-            watch.append("arah gross profit margin setelah " + ("perbaikan" if d_gpm > 0 else "penurunan") +
-                         f" {bps_txt(d_gpm)} pada {L}")
-    op, g_op = M_.v("operating_profit"), M_.g("operating_profit")
-    if op is not None and opm is not None and d_opm is not None:
-        s.append(w.pick(
-            f"Laba operasional {w.to(g_op, op)}, sehingga operating profit margin "
-            f"{'meningkat' if d_opm > 0 else 'turun'} {bps_txt(d_opm)} menjadi {opm * 100:.1f}%.",
-            f"Di level operasional, laba {w.to(g_op, op)} dengan operating profit margin "
-            f"sebesar {opm * 100:.1f}% ({'+' if d_opm >= 0 else '-'}{bps_txt(d_opm)} YoY)."))
-    d_rev = None if None in (rev, rev_py) else rev - rev_py
-    if d_rev and d_rev > 0 and M_.v("gross_profit", 0) is not None and np_ is not None and M_.v("net_profit", 0) is not None:
-        inc_gp = (gp - M_.v("gross_profit", 0)) / d_rev * 100
-        inc_np = (np_ - M_.v("net_profit", 0)) / d_rev * 100
-        s.append(f"Secara inkremental, setiap tambahan {w.sym()}100 pendapatan menghasilkan sekitar "
-                 f"{w.sym()}{inc_gp:.0f} laba kotor dan {w.sym()}{inc_np:.0f} laba bersih.")
-    if tax_flag:
-        s.append(f"Di bawah level operasional, beban pajak {w.to(M_.g('tax'), M_.v('tax'), True)}, sehingga tarif pajak efektif naik menjadi {etr * 100:.1f}% dari "
-                 f"{etr_py * 100:.1f}%, yang menahan pertumbuhan laba bersih.")
-        watch.append("normalisasi tarif pajak efektif")
-    conv, conv_py = safe_div(np_, op), safe_div(M_.v("net_profit", 0), M_.v("operating_profit", 0))
-    if conv is not None and conv_py is not None and abs(conv - conv_py) >= 0.05 and not tax_flag:
-        s.append(f"Rasio konversi laba operasional menjadi laba bersih {'meningkat' if conv > conv_py else 'menurun'} "
-                 f"menjadi {conv * 100:.1f}% dari {conv_py * 100:.1f}%, yang mengindikasikan "
-                 f"{'berkurangnya' if conv > conv_py else 'meningkatnya'} beban di bawah level operasional.")
-        if conv < conv_py:
-            watch.append("pos-pos di bawah laba operasional yang menekan konversi laba")
-    npm, npm_py = M_.v("r_net_profit"), M_.v("r_net_profit", 0)
-    # NPM sudah tercantum di Ringkasan
-    if p.idx > 0 and M_.v("r_gross_profit", 4) is not None and M_.v("r_gross_profit", 3) is not None:
-        qg, qg_prev = M_.v("r_gross_profit", 4), M_.v("r_gross_profit", 3)
-        dq = qg - qg_prev
-        if abs(dq) >= margin_bps:
-            s.append(f"Secara kuartalan, gross profit margin {p.q_label} {'meningkat' if dq > 0 else 'turun'} "
-                     f"{bps_txt(dq)} QoQ menjadi {qg * 100:.1f}%.")
-    para4 = " ".join(s)
-
-    # ---------- P5 kesimpulan
-    para5 = _conclusion_general(w, g_rev, d_opm, tax_flag, L, M_)
-
-    # ---------- P6 hal yang dicermati
-    para6 = _watch(watch, p)
-    return title, [para1, para2, para3, para4, para5, para6], watch
-
-
-def _verdict(w, g_rev, g_np, L):
-    if g_rev is None or g_np is None:
-        return None
-    strong = TH["strong_growth_pct"] / 100
-    if g_rev >= strong and g_np >= strong:
-        return w.pick(f"Secara umum, kinerja {L} tergolong solid dengan pertumbuhan di level pendapatan maupun laba bersih.",
-                      f"Kinerja {L} tergolong solid, tercermin dari pertumbuhan dua digit di level pendapatan dan laba bersih.")
-    if g_rev > 0 and g_np > 0:
-        return w.pick(f"Secara umum, kinerja {L} menunjukkan pertumbuhan yang moderat.",
-                      f"Kinerja {L} secara umum tumbuh moderat di level pendapatan maupun laba bersih.")
-    if g_rev > 0 >= g_np:
-        return "Dengan demikian, pertumbuhan pendapatan belum tercermin di level laba bersih."
-    if g_rev <= 0 < g_np:
-        return "Laba bersih tetap tumbuh di tengah pendapatan yang melemah, ditopang oleh perbaikan profitabilitas."
-    return f"Secara umum, kinerja {L} melemah di level pendapatan maupun laba bersih."
-
-
-def _composition(w, M_, rev, rev_py, L_py, watch):
-    comps = M_.comps("rev_seg")
-    s = []
-    if len(comps) >= 2 and rev:
-        main = max(comps, key=lambda r: r["vals"][1] or 0)
-        sh = (main["vals"][1] or 0) / rev
-        sh_py = safe_div(main["vals"][0], rev_py)
-        g = main["growth"][0]
-        txt = (f"Dari sisi komposisi, {comp_name(main['label'])} tetap menjadi kontributor utama dengan nilai "
-               f"{w.m(main['vals'][1])}")
-        txt += f" ({w.move(g)})" if g is not None else ""
-        txt += f", atau {sh * 100:.1f}% dari total pendapatan"
-        txt += f" (vs. {sh_py * 100:.1f}% pada {L_py})." if sh_py else "."
-        s.append(txt)
-        d_tot = None if None in (rev, rev_py) else rev - rev_py
-        if d_tot:
-            deltas = [(r, (r["vals"][1] or 0) - (r["vals"][0] or 0)) for r in comps]
-            same = [x for x in deltas if (x[1] > 0) == (d_tot > 0) and x[1] != 0]
-            if same:
-                drv, dv = max(same, key=lambda x: abs(x[1]))
-                share = dv / d_tot * 100
-                if drv is not main and 0 < share <= 300:
-                    s.append(f"{'Pertumbuhan' if d_tot > 0 else 'Penurunan'} pendapatan terutama "
-                             f"{'ditopang oleh' if d_tot > 0 else 'berasal dari'} {comp_name(drv['label'])}, "
-                             f"yang menyumbang sekitar {share:.0f}% dari {'kenaikan' if d_tot > 0 else 'penurunan'} "
-                             f"pendapatan.")
-        for r in comps:
-            if (r["vals"][0] in (None, 0)) and (r["vals"][1] or 0) > 0:
-                s.append(f"Di sisi lain, {comp_name(r['label'])} mulai berkontribusi sebesar {w.m(r['vals'][1])} "
-                         f"atau {r['vals'][1] / rev * 100:.1f}% dari total pendapatan.")
-                watch.append(f"kontribusi lanjutan {comp_name(r['label'])}")
-        weak = [r for r in comps if r is not main and r["growth"][0] is not None and r["growth"][0] < -0.05]
-        if weak:
-            s.append("Sebaliknya, " + join_and([f"{comp_name(r['label'])} turun {p1(r['growth'][0])} YoY" for r in weak[:2]]) + ".")
-    # laba per segmen (dari PDF)
-    seg_p = [r for r in M_.comps("seg_profit") if not r["label"].lower().startswith(("eliminasi", "elimination"))]
-    if seg_p:
-        top = max(seg_p, key=lambda r: r["vals"][1] or 0)
-        txt = (f"Berdasarkan informasi segmen, segmen {top['label']} membukukan laba sebesar {w.m(top['vals'][1])}"
-               + (f" ({w.move(top['growth'][0])})" if top["growth"][0] is not None else "") + ".")
-        losers = [r for r in seg_p if (r["vals"][1] or 0) < 0]
-        if losers:
-            txt += " Sementara itu, " + join_and(
-                [f"segmen {r['label']} mencatatkan rugi sebesar {w.m(abs(r['vals'][1]))}" for r in losers]) + "."
-            for r in losers:
-                watch.append(f"kinerja segmen {r['label']} yang masih mencatatkan rugi")
-        s.append(txt)
-    return " ".join(s) if s else None
-
-
-def _costs_general(w, M_, g_rev, rev, rev_py, p, watch):
-    s = []
-    cogs, g_c = M_.v("cogs"), M_.g("cogs")
-    if cogs is not None and g_c is not None:
-        rel = ""
-        if g_rev is not None:
-            rel = (", lebih rendah dibandingkan pertumbuhan pendapatan" if g_c < g_rev - 0.01 else
-                   ", lebih tinggi dibandingkan pertumbuhan pendapatan" if g_c > g_rev + 0.01 else
-                   ", sejalan dengan pertumbuhan pendapatan")
-        s.append(w.pick(f"Dari sisi biaya, beban pokok pendapatan {w.to(g_c, cogs, True)}{rel}.",
-                        f"Beban pokok pendapatan {w.to(g_c, cogs, True)}{rel}."))
-        comps = [r for r in M_.comps("cogs_comp") if r["vals"][0] is not None and r["vals"][1] is not None]
-        base = M_.v("cogs", 0) or 0
-        deltas = sorted(((r, r["vals"][1] - r["vals"][0]) for r in comps), key=lambda x: x[1])
-        ups = [x for x in reversed(deltas) if x[1] > 0 and base and x[1] / base >= 0.005][:2]
-        downs = [x for x in deltas if x[1] < 0 and base and abs(x[1]) / base >= 0.005][:1]
-        parts = []
-        if ups:
-            parts.append(("Kenaikan tersebut terutama berasal dari " if g_c > 0 else "Di dalamnya, kenaikan terjadi pada ")
-                         + join_and([f"{cost_name(r['label'])} ({r['growth'][0] * 100:+.1f}% YoY)" for r, _ in ups
-                                     if r["growth"][0] is not None]))
-        if downs:
-            r, _ = downs[0]
-            if r["growth"][0] is not None:
-                parts.append(f"sementara {cost_name(r['label'])} turun {p1(r['growth'][0])} YoY")
-        if parts:
-            s.append(", ".join(parts) + ".")
-        for r, dv in ups[:1]:
-            if r["growth"][0] is not None and r["growth"][0] > 0.25:
-                watch.append(f"tren {cost_name(r['label'])} yang tumbuh {p1(r['growth'][0])} YoY")
-    opex, g_o = M_.v("opex"), M_.g("opex")
-    ro, ro_py = M_.v("r_opex"), M_.v("r_opex", 0)
-    if opex is not None and g_o is not None and ro is not None and ro_py is not None and abs(ro - ro_py) >= 0.005:
-        s.append(f"Beban usaha {w.to(g_o, opex, True)}, dengan rasio terhadap pendapatan "
-                 f"{'meningkat' if ro > ro_py else 'menurun'} menjadi {ro * 100:.1f}% (vs. {ro_py * 100:.1f}%).")
-    if p.idx > 0:
-        rq, rq_prev = M_.v("revenue", 4), M_.v("revenue", 3)
-        gq, gq_prev = M_.v("gross_profit", 4), M_.v("gross_profit", 3)
-        if None not in (rq, rq_prev, gq, gq_prev) and rq - rq_prev > 0:
-            inc = (gq - gq_prev) / (rq - rq_prev)
-            gpm_prev = safe_div(gq_prev, rq_prev) or 0
-            if inc < gpm_prev * 0.5:
-                s.append(f"Secara kuartalan, tambahan pendapatan sebesar {w.m(rq - rq_prev)} dibandingkan "
-                         f"{p.prev().q_label} hanya menghasilkan tambahan laba kotor sebesar {w.m(gq - gq_prev)}, "
-                         f"yang menunjukkan bahwa sebagian besar kenaikan pendapatan diimbangi oleh kenaikan beban pokok.")
-    return " ".join(s) if s else None
-
-
-def _conclusion_general(w, g_rev, d_opm, tax_flag, L, M_):
-    mb = TH["margin_move_bps"] / 10000
-    if g_rev is None:
-        return None
-    up = g_rev > 0
-    if up and d_opm is not None and d_opm >= mb:
-        core = w.pick(f"kinerja {L} mencerminkan pertumbuhan yang berkualitas, dengan kenaikan pendapatan yang diikuti "
-                      f"perbaikan profitabilitas operasional",
-                      f"hasil {L} menunjukkan pertumbuhan yang disertai perbaikan profitabilitas operasional")
-    elif up and d_opm is not None and d_opm <= -mb:
-        core = f"pertumbuhan pendapatan pada {L} belum diikuti oleh profitabilitas, seiring margin operasional yang menyempit"
-    elif not up and d_opm is not None and d_opm >= mb:
-        core = f"perbaikan efisiensi menopang profitabilitas di tengah pendapatan yang melemah pada {L}"
-    elif not up and d_opm is not None and d_opm <= -mb:
-        core = f"kinerja {L} tertekan baik dari sisi pendapatan maupun margin"
-    else:
-        core = f"kinerja {L} relatif sejalan dengan pergerakan pendapatan, dengan profitabilitas operasional yang terjaga"
-    extra = ""
-    if tax_flag:
-        extra = (" Meski demikian, kenaikan tarif pajak efektif menjadi faktor yang menahan laju laba bersih, "
-                 "sehingga keberlanjutannya perlu dipantau.")
-    return f"Secara keseluruhan, {core}.{extra}"
-
-
-def _watch(items, p: Period):
-    items = list(dict.fromkeys(items))[:4]
-    if not items:
-        return None
-    nxt = p.next().label
-    numbered = [f"({i}) {t}" for i, t in enumerate(items, 1)]
-    return f"Hal yang perlu dicermati pada {nxt}: " + join_and(numbered) + "."
-
-
-# ================================================================== BANK
-def _bank(w: W, M_: M, table, store, p: Period):
-    tk = store["ticker"]
-    sharia = table["template"] == "bank_sharia"
-    L, L_py = _labels(p)
-    core = "pendapatan margin dan bagi hasil bersih" if sharia else "pendapatan bunga bersih (NII)"
-    loan = "pembiayaan" if sharia else "kredit"
-    ldr = "FDR" if sharia else "LDR"
-    watch = []
-
-    np_, g_np = M_.v("net_profit"), M_.g("net_profit")
-    nii, g_nii = M_.v("nii"), M_.g("nii")
-    ppop, g_ppop = M_.v("ppop"), M_.g("ppop")
-    prov, prov_py, g_prov = M_.v("provision"), M_.v("provision", 0), M_.g("provision")
-    op, op_py = M_.v("operating_profit"), M_.v("operating_profit", 0)
-
-    # judul
-    a = ("Laba Bersih Tumbuh Solid" if (g_np or 0) * 100 >= TH["strong_growth_pct"] else
-         "Laba Bersih Tumbuh Moderat" if (g_np or 0) * 100 >= TH["flat_band_pct"] else
-         "Laba Bersih Relatif Stabil" if (g_np or 0) * 100 > -TH["flat_band_pct"] else "Laba Bersih Terkoreksi")
-    prov_share = None
-    if None not in (prov, prov_py, op, op_py) and op - op_py > 0:
-        prov_share = (prov_py - prov) / (op - op_py)
-    b = ("Ditopang Penurunan Provisi" if prov_share is not None and prov_share >= 0.3 else
-         f"Didukung Pertumbuhan {'Pendapatan Inti' if (g_nii or 0) > 0 else 'Non-Inti'}")
-    title = f"{tk} {p.label}: {a}, {b}"
-
-    # P1
-    s = [w.pick(f"{tk} membukukan laba bersih sebesar {w.m(np_)} pada {L}, {w.move(g_np)}.",
-                f"Pada {L}, laba bersih {tk} tercatat sebesar {w.m(np_)}, {w.move(g_np)}.",
-                f"Laba bersih {tk} pada {L} mencapai {w.m(np_)}, {w.move(g_np)} dari {w.m(M_.v('net_profit', 0))} pada {L_py}.")]
-    if nii is not None:
-        s.append(f"Di sisi pendapatan inti, {core} {w.to(g_nii, nii)}.")
-    q = _quarter_sentence(w, M_, "net_profit", "laba bersih", p)
-    if q:
-        s.append(q)
-    para1 = " ".join(x for x in s if x)
-
-    # P2 komposisi pendapatan
-    s = []
-    inc = [r for r in M_.comps("core_inc_comp") if r["vals"][0] is not None and r["vals"][1] is not None]
-    if inc:
-        deltas = sorted(((r, r["vals"][1] - r["vals"][0]) for r in inc), key=lambda x: x[1])
-        up_ = [x for x in reversed(deltas) if x[1] > 0][:1]
-        dn_ = [x for x in deltas if x[1] < 0][:1]
-        g_ci = M_.g("core_income")
-        txt = f"Pendapatan {'margin dan bagi hasil' if sharia else 'bunga'} {w.to(g_ci, M_.v('core_income'))}"
-        det = []
-        if up_ and up_[0][0]["growth"][0] is not None:
-            det.append(f"kenaikan {lower_first(up_[0][0]['label'])} ({up_[0][0]['growth'][0] * 100:+.1f}% YoY)")
-        if dn_ and dn_[0][0]["growth"][0] is not None:
-            det.append(f"penurunan {lower_first(dn_[0][0]['label'])} ({dn_[0][0]['growth'][0] * 100:+.1f}% YoY)")
-        s.append(txt + (", dengan " + join_and(det) if det else "") + ".")
-    cc, g_cc = M_.v("core_cost"), M_.g("core_cost")
-    if cc is not None and g_cc is not None:
-        lbl = "hak pihak ketiga atas bagi hasil" if sharia else "beban bunga"
-        s.append(f"Di sisi biaya dana, {lbl} {w.to(g_cc, cc, True)}"
-                 + (", sehingga mendukung pertumbuhan pendapatan inti bersih." if g_cc < (M_.g('core_income') or 0)
-                    else ", lebih cepat dari pertumbuhan pendapatan inti."))
-        if g_cc > (M_.g("core_income") or 0):
-            watch.append("tren biaya dana terhadap imbal hasil " + loan)
-    nc, g_nc = M_.v("noncore_income"), M_.g("noncore_income")
-    if nc is not None and g_nc is not None:
-        comps = [r for r in M_.comps("noncore_comp") if r["vals"][0] is not None and r["vals"][1] is not None]
-        drv = max(comps, key=lambda r: abs(r["vals"][1] - r["vals"][0]), default=None)
-        txt = f"Pendapatan non-inti {w.to(g_nc, nc)}"
-        if drv and drv["growth"][0] is not None:
-            txt += f", terutama dipengaruhi oleh {lower_first(drv['label'])} ({drv['growth'][0] * 100:+.1f}% YoY)"
-        s.append(txt + ".")
-    para2 = " ".join(s) if s else None
-
-    # P3 biaya operasional & provisi
-    s = []
-    ox, g_ox = M_.v("opex"), M_.g("opex")
-    cir, cir_py = M_.v("r_cir"), M_.v("r_cir", 0)
-    if ox is not None and g_ox is not None:
-        txt = f"Beban operasional {w.to(g_ox, ox, True)}"
-        if cir is not None and cir_py is not None:
-            txt += (f", sehingga cost to income ratio {'meningkat' if cir > cir_py else 'membaik'} menjadi "
-                    f"{cir * 100:.1f}% (vs. {cir_py * 100:.1f}%)")
-            if cir - cir_py > 0.02:
-                watch.append("disiplin biaya operasional (CIR)")
-        s.append(txt + ".")
-    if ppop is not None:
-        s.append(f"Dengan demikian, laba operasional sebelum pencadangan (PPOP) {w.to(g_ppop, ppop)}.")
-    if prov is not None and g_prov is not None:
-        coc = M_.v("r_coc")
-        txt = f"Beban pencadangan {w.to(g_prov, prov, True)}"
-        if coc is not None:
-            txt += f", dengan cost of credit (disetahunkan) sebesar {coc * 100:.2f}%"
-        s.append(txt + ".")
-    if prov_share is not None and prov_share >= 0.3:
-        s.append(f"Penurunan beban pencadangan menyumbang sekitar {prov_share * 100:.0f}% dari kenaikan laba operasional, "
-                 f"sehingga sebagian pertumbuhan laba ditopang oleh faktor provisi, bukan sepenuhnya oleh bisnis inti.")
-        watch.append("keberlanjutan beban pencadangan yang rendah")
-    para3 = " ".join(s) if s else None
-
-    # P4 neraca
-    s = []
-    lv, dv = M_.v("bs_loans"), M_.v("bs_deposits")
-    ytd_l, ytd_d = table["m"].get("ytd_loans"), table["m"].get("ytd_deposits")
-    if lv:
-        txt = f"Dari sisi neraca, {loan} tercatat sebesar {w.m(lv)}"
-        g = [f"{x * 100:+.1f}% {lbl}" for x, lbl in ((ytd_l, "YtD"), (M_.g("bs_loans", 2), "YoY")) if x is not None]
-        s.append(txt + (f" ({'; '.join(g)})" if g else "") + ".")
-    if dv:
-        txt = f"Dana pihak ketiga mencapai {w.m(dv)}"
-        g = [f"{x * 100:+.1f}% {lbl}" for x, lbl in ((ytd_d, "YtD"), (M_.g("bs_deposits", 2), "YoY")) if x is not None]
-        txt += f" ({'; '.join(g)})" if g else ""
-        casa, ld = M_.v("r_casa"), M_.v("r_ldr")
-        if casa is not None:
-            txt += f", dengan CASA ratio sebesar {casa * 100:.1f}%"
-        if ld is not None:
-            txt += f" dan {ldr} sebesar {ld * 100:.1f}%"
-        s.append(txt + ".")
-    seg = [r for r in M_.comps("seg_profit") if not r["label"].lower().startswith(("eliminasi", "penyesuaian", "elimination", "adjustment"))]
-    if seg and np_:
-        top = max(seg, key=lambda r: r["vals"][1] or 0)
-        s.append(f"Berdasarkan informasi segmen, segmen {top['label']} menjadi kontributor laba terbesar dengan "
-                 f"{w.m(top['vals'][1])} ({(top['vals'][1] or 0) / np_ * 100:.0f}% dari laba bersih)"
-                 + (f", {w.move(top['growth'][0])}" if top["growth"][0] is not None else "") + ".")
-    para4 = " ".join(s) if s else None
-
-    # P5 kesimpulan
-    if prov_share is not None and prov_share >= 0.3:
-        c = (f"Secara keseluruhan, pertumbuhan laba {tk} pada {L} lebih banyak ditopang oleh penurunan beban pencadangan, "
-             f"sementara pertumbuhan pendapatan inti bersih relatif {'terbatas' if (g_nii or 0) < 0.05 else 'moderat'}. "
-             f"Kualitas pertumbuhan laba ke depan akan bergantung pada akselerasi pendapatan inti dan terjaganya kualitas aset.")
-    elif (g_nii or 0) > 0 and (g_np or 0) > 0:
-        c = (f"Secara keseluruhan, kinerja {L} didukung oleh pertumbuhan pendapatan inti yang diikuti oleh kenaikan laba, "
-             f"mencerminkan kualitas pertumbuhan yang baik.")
-    else:
-        c = f"Secara keseluruhan, kinerja {L} menunjukkan tekanan pada pendapatan inti yang perlu dicermati lebih lanjut."
-    watch = watch + [f"kualitas aset dan arah {ldr}"]
-    para6 = _watch(watch, p)
-    return title, [para1, para2, para3, para4, c, para6], watch
-
-
-# ================================================================== RINGKASAN INVESTOR
-def _pp(x):
-    return "n.a." if x is None else f"{x * 100:.1f}%"
-
-
-def _chg(cur, prev):
-    if cur is None or prev is None:
-        return ""
-    d = round((cur - prev) * 10000)
-    return f" ({d:+,} bps)"
-
-
-def _summary(w: W, M_: M, table, p: Period, watch) -> str:
-    """Empat poin inti yang bisa dibaca dalam 30 detik."""
-    L, _ = _labels(p)
-    g = lambda k, i=0: M_.g(k, i)  # noqa: E731
-    f = lambda x: "n.m." if x is None else f"{x * 100:+.1f}%"  # noqa: E731
-    lines = []
-    q_txt = ""
-    if p.idx > 0 and g("net_profit", 1) is not None:
-        q_txt = f"; laba {p.q_label} {f(g('net_profit', 1))} QoQ"
-    if table["template"] == "general":
-        lines.append(f"**Kinerja:** pendapatan {w.m(M_.v('revenue'))} ({f(g('revenue'))} YoY), "
-                     f"{'laba inti' if table['m'].get('net_profit_reported') else 'laba bersih'} {w.m(M_.v('net_profit'))} ({f(g('net_profit'))} YoY){q_txt}.")
-        lines.append(f"**Profitabilitas:** GPM {_pp(M_.v('r_gross_profit'))}{_chg(M_.v('r_gross_profit'), M_.v('r_gross_profit', 0))}, "
-                     f"OPM {_pp(M_.v('r_operating_profit'))}{_chg(M_.v('r_operating_profit'), M_.v('r_operating_profit', 0))}, "
-                     f"NPM {_pp(M_.v('r_net_profit'))}, ROE {_pp(M_.v('r_roe'))}.")
-        comps = [r for r in M_.comps("rev_seg") if r["vals"][0] is not None and r["vals"][1] is not None]
-        rev_d = (M_.v("revenue") or 0) - (M_.v("revenue", 0) or 0)
-        if comps and rev_d:
-            drv = max(comps, key=lambda r: ((r["vals"][1] - r["vals"][0]) * (1 if rev_d > 0 else -1)))
-            lines.append(f"**Pendorong utama:** {lower_first(drv['label'])} ({f(drv['growth'][0])} YoY), "
-                         f"porsi {drv['vals'][1] / M_.v('revenue') * 100:.0f}% dari pendapatan.")
-        nde = M_.v("r_nde")
-        if nde is not None:
-            lines.append(f"**Neraca:** {'posisi kas bersih' if nde < 0 else 'utang bersih terhadap ekuitas'} "
-                         f"{abs(nde) * 100:.0f}% dari ekuitas.")
-    else:
-        lines.append(f"**Kinerja:** laba bersih {w.m(M_.v('net_profit'))} ({f(g('net_profit'))} YoY){q_txt}; "
-                     f"pendapatan inti bersih {f(g('nii'))} YoY.")
-        lines.append(f"**Profitabilitas & efisiensi:** ROE {_pp(M_.v('r_roe'))}, CIR {_pp(M_.v('r_cir'))}"
-                     f"{_chg(M_.v('r_cir'), M_.v('r_cir', 0))}, cost of credit {_pp(M_.v('r_coc'))}.")
-        yl, yd = table["m"].get("ytd_loans"), table["m"].get("ytd_deposits")
-        lines.append(f"**Neraca:** {'pembiayaan' if table['template'] == 'bank_sharia' else 'kredit'} "
-                     f"{f(yl)} YtD, DPK {f(yd)} YtD, CASA {_pp(M_.v('r_casa'))}, "
-                     f"{'FDR' if table['template'] == 'bank_sharia' else 'LDR'} {_pp(M_.v('r_ldr'))}.")
-    if watch:
-        prio = ("pajak", "pencadangan", "rugi", "margin", "biaya", "cir")
-        top = min(watch, key=lambda t: next((i for i, k in enumerate(prio) if k in t.lower()), len(prio)))
-        lines.append(f"**Perlu dicermati:** {top}.")
-    return "**Ringkasan " + L + "**\n" + "\n".join("• " + x for x in lines)
-
-
-def _discontinued(w: W, M_: M, table, p: Period):
-    """Paragraf khusus bila laba memuat operasi yang dihentikan (laba inti dipakai untuk analisis)."""
-    rep = table["m"].get("net_profit_reported")
-    if not rep:
-        return None
-    L, _ = _labels(p)
-    disc = M_.v("np_disc")
-    core, g_core = M_.v("net_profit"), M_.g("net_profit")
-    g_rep = rep["growth"][0]
-    txt = (f"Perlu dicatat, laba bersih yang dilaporkan pada {L} sebesar {w.m(rep['vals'][1])}"
-           + (f" ({g_rep * 100:+.1f}% YoY)" if g_rep is not None else "")
-           + f" termasuk laba dari operasi yang dihentikan sebesar {w.m(disc)}. ")
-    txt += (f"Tanpa pos tersebut, laba inti {w.to(g_core, core)}"
-            + ". Angka laba inti inilah yang dipakai dalam analisis margin dan ROE.")
-    return txt
+    text = re.sub(r"[ \t]{2,}", " ", text).replace(" ,", ",").replace(" .", ".").replace("..", ".")
+    return text[:1].upper() + text[1:] if text else text

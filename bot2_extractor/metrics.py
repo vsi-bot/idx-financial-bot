@@ -9,15 +9,25 @@ class Calc:
         self.P = store["periods"]
         self.basis: dict[str, str] = {}     # basis kolom kuartal tahun lalu per pos: restated / as_reported / not_comparable
         self.restated = False
+        self.currency_mismatch = False
 
     # ------------------------------------------------ pengambilan nilai dasar
+    def _ok(self, e):
+        """Periode dengan mata uang berbeda dari laporan terbaru tidak dibandingkan."""
+        if e is None:
+            return False
+        if e.get("currency", self.s.get("currency")) != self.s.get("currency"):
+            self.currency_mismatch = True
+            return False
+        return True
+
     def _own(self, p: Period, key):
         e = self.P.get(p.key)
-        return None if e is None else e["cur"].get(key)
+        return e["cur"].get(key) if self._ok(e) else None
 
     def _from_next(self, p: Period, key):
         e = self.P.get(Period(p.year + 1, p.idx).key)
-        return None if e is None else e["prior"].get(key)
+        return e["prior"].get(key) if self._ok(e) else None
 
     def cum(self, p: Period, key, prefer_next=False):
         a, b = self._own(p, key), self._from_next(p, key)
@@ -116,7 +126,8 @@ def growths(vals):
 
 
 def ratio_vals(num, den, scale=1.0):
-    return [None if (a is None or b in (None, 0)) else a / b * scale for a, b in zip(num, den)]
+    """Rasio; penyebut nol/negatif (mis. ekuitas negatif) -> n.m."""
+    return [None if (a is None or b is None or b <= 0) else a / b * scale for a, b in zip(num, den)]
 
 
 def annualize(vals, p: Period):
@@ -237,6 +248,7 @@ def build(store: dict, period: Period) -> dict:
         add("Operating Expenses", "opex", opex)
         add("Operating Profit", "operating_profit")
         add("Non-operating Items (net)", "non_operating")
+        components("nonop_comp", "non_operating")
         add("Profit Before Tax", "pbt")
         add("Tax Expense", "tax")
         has_disc = any(v for v in c.flow("np_disc") if v)
@@ -306,6 +318,9 @@ def build(store: dict, period: Period) -> dict:
         loans = c.stock("bs_loans")
         coc = ratio_vals(annualize(m["provision"]["vals"], period), c.avg_stock("bs_loans"))
         add("Cost of Credit (annualized)", "r_coc", coc, kind="ratio", fmt="pct")
+        nim = ratio_vals(annualize(m["nii"]["vals"], period), c.avg_stock("bs_earning_assets"))
+        if any(v for v in nim if v):
+            add("NIM (est.)", "r_nim", nim, kind="ratio", fmt="pct")
         _roe(c, m, add, period)
         dep = c.stock("bs_deposits")
         casa = [None if (a is None or b is None) else a + b for a, b in zip(c.stock("dep_current"), c.stock("dep_savings"))]
@@ -319,10 +334,25 @@ def build(store: dict, period: Period) -> dict:
                          ("dep_savings", "Tabungan" if sharia else "Savings"),
                          ("dep_time", "Deposito" if sharia else "Time Deposits")):
             add(lbl, key, c.stock(key), kind="comp")
+        pres_now = (store["periods"].get(period.key) or {}).get("presentation") or {}
+        pres_py = (store["periods"].get(period.same_last_year().key) or {}).get("presentation") or {}
+        pres_prev = (store["periods"].get(period.prev().key) or {}).get("presentation") or {}
+        if pres_now:
+            rows.append({"label": "Asset Quality & Capital (per company presentation)", "kind": "section"})
+            for k, lbl in (("npl", "NPL (gross)"), ("lar", "Loan at Risk (LAR)"), ("coverage", "NPL Coverage"),
+                           ("car", "Capital Adequacy Ratio (CAR)"), ("nim", "NIM (per presentation)")):
+                if k in pres_now:
+                    add(lbl, f"p_{k}", [pres_py.get(k), pres_now.get(k), pres_py.get(k), pres_prev.get(k),
+                                         pres_now.get(k)], kind="ratio", fmt="pct")
         ye = Period(period.year - 1, 3)
         m["ytd_loans"] = growth(loans[1], c.bs(ye, "bs_loans"))
         m["ytd_deposits"] = growth(dep[1], c.bs(ye, "bs_deposits"))
 
+    for k in ("np_nci", "bs_total_assets", "fin_cost", "fin_income", "non_operating", "other_op_net"):
+        if k not in m:
+            v = c.stock(k) if k.startswith("bs_") else c.flow(k)
+            m[k] = {"vals": v, "growth": growths(v), "label": k}
+    m["_currency_mismatch"] = c.currency_mismatch
     from bot2_extractor.validate import run_checks
     checks = run_checks(c, m, rows, store, period, has_disc)
     from core.labels import to_en

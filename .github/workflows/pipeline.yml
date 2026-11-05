@@ -2,10 +2,12 @@ name: IDX Financial Bot
 
 on:
   schedule:
-    - cron: "0 */2 * * *"          # tiap 2 jam (waktu UTC)
+    # Setiap 15 menit, pukul 07.00 - 17.30 WIB (= 00.00 - 10.30 UTC)
+    - cron: "*/15 0-9 * * *"
+    - cron: "0,15,30 10 * * *"
   repository_dispatch:
-    types: [inbox]                  # dipicu Apps Script saat ada file baru di Inbox
-  workflow_dispatch:                # tombol "Run workflow" manual
+    types: [inbox]                  # dipicu Apps Script saat ada file baru di Inbox (07.00 - 17.30 WIB)
+  workflow_dispatch:                # tombol "Run workflow" manual (kapan saja)
     inputs:
       tickers:
         description: "Proses ulang emiten tertentu (pisahkan koma, mis. AADI,BRIS). Kosongkan jika tidak perlu."
@@ -20,7 +22,7 @@ on:
         required: false
         default: ""
       force_scrape:
-        description: "Paksa scraper IDX jalan sekarang"
+        description: "Paksa scraper IDX jalan sekarang (hanya jika scraper diaktifkan)"
         type: boolean
         default: false
 
@@ -39,11 +41,11 @@ env:
 jobs:
   collect:
     name: Bot 1 - Kumpulkan laporan
-    # Kalau scraper diblok di server GitHub, isi Variable COLLECTOR_RUNNER = self-hosted (lihat README)
     runs-on: ${{ vars.COLLECTOR_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 120
+    timeout-minutes: 60
     outputs:
       tickers: ${{ steps.collect.outputs.tickers }}
+      outbox: ${{ steps.collect.outputs.outbox }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,10 +53,6 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-v1
       - id: collect
         env:
           FORCE_SCRAPE: ${{ inputs.force_scrape && 'true' || 'false' }}
@@ -65,10 +63,10 @@ jobs:
     needs: collect
     if: needs.collect.outputs.tickers != '' && needs.collect.outputs.tickers != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 5               # hingga 5 emiten diproses bersamaan (batas Apps Script)
+      max-parallel: 5               # hingga 5 emiten dihitung bersamaan
       matrix:
         ticker: ${{ fromJson(needs.collect.outputs.tickers) }}
     steps:
@@ -79,3 +77,18 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python main.py process --tickers ${{ matrix.ticker }} ${{ inputs.force && '--force' || '' }} --periods "${{ inputs.periods }}"
+
+  send:
+    name: Bot 3 - Kirim ke Discord (berurutan per emiten)
+    needs: [collect, process]
+    if: always() && needs.collect.result == 'success' && (needs.collect.outputs.tickers != '[]' || needs.collect.outputs.outbox == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py send

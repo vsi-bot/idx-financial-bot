@@ -464,13 +464,13 @@ def build(table, store, note=None, wl=None):
     c = Ctx(table, store, wl)
     title, paras = (_general if table["template"] == "general" else _bank)(c)
     for a in table.get("anomalies") or []:
-        c.watch.append((2, 0, a))
+        c.watch.append((2, 0, _register_numbers(c.F, a, convert=True)))
     ranked = sorted(dict(((t, (pr, -mat)) for pr, mat, t in c.watch)).items(), key=lambda x: x[1])
     items = [t for t, _ in ranked]
     top, rest = (items[0] if items else None), items[1:5]
     paras = [p for p in paras if p]
     if note:
-        paras.append(note.strip())
+        paras.append(_register_numbers(c.F, note.strip(), convert=False))
     paras.append(watch_paragraph(c, rest))
     paras.insert(0, summary(c, top))
     paras = [_polish(p) for p in paras if p]
@@ -483,3 +483,19 @@ def _polish(text: str) -> str:
         text = re.sub(re.escape(bad), good, text, flags=re.I)
     text = re.sub(r"[ \t]{2,}", " ", text).replace(" ,", ",").replace(" .", ".").replace("..", ".")
     return text[:1].upper() + text[1:] if text else text
+
+
+_PCT_EN = re.compile(r"([+-]?)(\d+(?:\.\d+)?)%")
+
+
+def _register_numbers(F, text, convert=True):
+    """Daftarkan angka dari teks luar (anomali / catatan analis) ke fact registry.
+    convert=True: ubah persen format Inggris (12.3%) menjadi format Indonesia (12,3%)."""
+    from bot3_narrator.facts import BPS_RE, MONEY_RE, PCT_RE
+    if convert:
+        text = _PCT_EN.sub(lambda m: F.pct(float(m.group(2)) / 100 * (-1 if m.group(1) == "-" else 1),
+                                           how="anomaly", signed=bool(m.group(1))), text)
+    for rx in (MONEY_RE, PCT_RE, BPS_RE):
+        for mt in rx.findall(text):
+            F._reg(mt, None, None, "external", 0)
+    return text

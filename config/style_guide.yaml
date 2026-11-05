@@ -1,0 +1,22 @@
+# ============================================================
+# Pedoman gaya bahasa narasi.
+# Kiri: kata/frasa yang dihindari. Kanan: penggantinya.
+# Silakan tambah baris baru. Pencocokan tidak membedakan huruf besar/kecil.
+# ============================================================
+replace:
+  "lonjakan": "kenaikan signifikan"
+  "melonjak": "meningkat signifikan"
+  "meroket": "meningkat substansial"
+  "melesat": "tumbuh signifikan"
+  "motor pertumbuhan": "kontributor utama pertumbuhan"
+  "mesin pertumbuhan": "kontributor utama pertumbuhan"
+  "anjlok": "turun signifikan"
+  "merosot tajam": "turun signifikan"
+  "terjun bebas": "terkontraksi signifikan"
+  "menyusut": "menurun"
+  "kebocoran": "penurunan konversi"
+  "terserap": "diimbangi"
+  "ujian berikutnya": "faktor kunci"
+  "luar biasa": ""
+  "fantastis": ""
+  "spektakuler": ""

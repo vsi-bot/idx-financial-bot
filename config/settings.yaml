@@ -1,0 +1,55 @@
+# ============================================================
+# Pengaturan utama bot. Aman diubah tanpa menyentuh kode.
+# Nilai rahasia (token, webhook, ID folder) TIDAK ditaruh di sini,
+# melainkan di GitHub Secrets.
+# ============================================================
+
+folders:
+  inbox: "Inbox"
+  unknown: "_Tidak Dikenali"
+  emiten: "Emiten"
+  system: "_Sistem"
+  period_format: "Financial Update - {label}"   # {label} -> 1Q26, 2Q26, 3Q26, FY25
+
+data:
+  start_year: 2025            # data ditarik mulai 1Q25
+  narrate_from: "3Q26"        # narasi hanya untuk periode ini dan sesudahnya
+
+scraper:
+  enabled: true
+  base_url: "https://www.idx.co.id"
+  report_page: "/id/perusahaan-tercatat/laporan-keuangan-dan-tahunan/"
+  api_path: "/primary/ListedCompany/GetFinancialReport"
+  index_from: 1
+  page_size: 100
+  delay_min: 4
+  delay_max: 9
+  headless: true
+  offseason_interval_hours: 12  # di luar musim laporan, scraper jalan maks. tiap 12 jam
+  # Musim laporan: scraper jalan setiap kali workflow berjalan (tiap 2 jam)
+  seasons:                      # [bulan-tanggal mulai, bulan-tanggal selesai]
+    - ["03-01", "05-10"]        # laporan tahunan + 1Q
+    - ["07-10", "09-05"]        # 2Q
+    - ["10-10", "11-15"]        # 3Q
+
+discord:
+  attach_excel: false       # true = lampirkan file Excel di pesan Discord
+  status_messages: true
+
+analysis:
+  # Ambang batas yang dipakai mesin narasi
+  strong_growth_pct: 15       # pertumbuhan >= 15% disebut solid
+  flat_band_pct: 3            # -3% s.d. +3% disebut relatif stabil
+  margin_move_bps: 100        # perubahan margin >= 100 bps dianggap material
+  tax_jump_pp: 3              # kenaikan tarif pajak efektif >= 3 poin persen ditandai
+
+theme:
+  # Warna tema (kode hex tanpa #). Merah Victoria Sekuritas Indonesia.
+  header: "C00000"          # latar header tabel
+  header_growth: "8B0000"   # latar header kolom YoY/QoQ
+  growth_fill: "FDECEC"     # latar sel kolom YoY/QoQ
+  section_text: "C00000"    # warna judul bagian
+
+table:
+  max_groups: 4             # maksimal kelompok per pos, sisanya digabung ke "Lainnya"
+  min_share: 0.02           # kelompok < 2% dari total digabung ke "Lainnya"

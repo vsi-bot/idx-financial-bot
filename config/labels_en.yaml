@@ -1,0 +1,124 @@
+# ============================================================
+# Terjemahan label tabel ke bahasa Inggris (narasi tetap bahasa Indonesia).
+# Urutan pemakaian: exact -> nama Inggris dari PDF segmen -> prefix + words -> label asli.
+# Tambahkan baris di "exact" jika ada label yang terjemahannya kurang pas.
+# ============================================================
+exact:
+  "Lainnya": "Others"
+  "Lainnya & eliminasi": "Others & eliminations"
+  "Lain-lain": "Others"
+  "Biaya produksi & operasional": "Production & operating costs"
+  "Bahan baku & material": "Raw materials"
+  "Royalti & iuran": "Royalties & levies"
+  "Logistik & angkutan": "Logistics & freight"
+  "Depresiasi & amortisasi": "Depreciation & amortization"
+  "Tenaga kerja": "Personnel expenses"
+  "Margin pembiayaan & kredit": "Financing margin & loan income"
+  "Bagi hasil": "Profit-sharing income"
+  "Penempatan & surat berharga": "Placements & securities"
+  "Deposito": "Time deposits"
+  "Tabungan": "Savings"
+  "Giro": "Current accounts"
+  "Pinjaman & surat berharga": "Borrowings & securities"
+  "Fee & komisi": "Fees & commissions"
+  "Pemulihan aset dihapusbukukan": "Recoveries of written-off assets"
+  "Treasury & selisih kurs": "Treasury & FX gains"
+  "Umum & administrasi": "General & administrative"
+  "Pendapatan Margin & Bagi Hasil": "Margin & Profit-Sharing Income"
+  "Hak Pihak Ketiga atas Bagi Hasil": "Third-Party Share of Returns"
+  "Pendapatan Margin & Bagi Hasil Bersih": "Net Margin & Profit-Sharing Income"
+  "Pendapatan Operasional Lainnya": "Other Operating Income"
+  "Pembiayaan": "Financing"
+  "Dana Pihak Ketiga": "Third-Party Funds"
+  "Penjualan batubara": "Coal sales"
+  "Penjualan batu bara": "Coal sales"
+  "Domestik": "Domestic"
+  "Ekspor": "Export"
+  "Hubungan Kelembagaan": "Institutional Relations"
+prefix:
+  "penjualan ": "{} sales"
+  "pendapatan jasa ": "{} services revenue"
+  "pendapatan sewa ": "{} rental revenue"
+  "pendapatan ": "{} revenue"
+  "penyewaan ": "{} rental"
+  "jasa ": "{} services"
+  "beban ": "{} expenses"
+  "segmen ": "{} segment"
+words:
+  batubara: coal
+  emas: gold
+  nikel: nickel
+  timah: tin
+  tembaga: copper
+  minyak: oil
+  gas: gas
+  listrik: electricity
+  ketenagalistrikan: electricity
+  energi: energy
+  semen: cement
+  kertas: paper
+  pulp: pulp
+  sawit: palm
+  makanan: food
+  minuman: beverages
+  rokok: cigarettes
+  farmasi: pharmaceutical
+  obat: medicines
+  kesehatan: healthcare
+  rumah: home
+  sakit: hospital
+  properti: property
+  tanah: land
+  bangunan: buildings
+  apartemen: apartments
+  perkantoran: office
+  hotel: hotel
+  kendaraan: vehicles
+  bermotor: motor
+  otomotif: automotive
+  alat: equipment
+  berat: heavy
+  konstruksi: construction
+  kontraktor: contracting
+  pertambangan: mining
+  perdagangan: trading
+  distribusi: distribution
+  logistik: logistics
+  angkutan: transportation
+  pengangkutan: transportation
+  pelayaran: shipping
+  telekomunikasi: telecommunications
+  seluler: cellular
+  internet: internet
+  data: data
+  media: media
+  iklan: advertising
+  periklanan: advertising
+  ritel: retail
+  eceran: retail
+  grosir: wholesale
+  ekspor: export
+  domestik: domestic
+  lokal: local
+  aset: assets
+  sewa: rental
+  jasa: services
+  penunjang: supporting
+  penunjangnya: supporting
+  manajemen: management
+  keuangan: financial
+  pembiayaan: financing
+  asuransi: insurance
+  investasi: investment
+  agribisnis: agribusiness
+  perkebunan: plantation
+  peternakan: livestock
+  pakan: feed
+  ternak: livestock
+  unggas: poultry
+  susu: dairy
+  produk: products
+  barang: goods
+  lainnya: others
+  lain-lain: others
+  dan: and

@@ -1,0 +1,29 @@
+# ============================================================
+# Pengelompokan komponen agar tabel ringkas.
+# Setiap kelompok berisi kata kunci; komponen yang namanya mengandung kata kunci
+# masuk ke kelompok itu. Urutan berpengaruh: pencocokan pertama yang dipakai.
+# Yang tidak cocok dengan kelompok mana pun masuk "Lainnya".
+# ============================================================
+cogs_comp:
+  "Biaya produksi & operasional": [pertambangan, pemrosesan, produksi, perbaikan, pemeliharaan, overhead, energi, bahan bakar, kontraktor]
+  "Bahan baku & material": [material, bahan baku, pembelian, persediaan]
+  "Royalti & iuran": [royalti, iuran, retribusi]
+  "Logistik & angkutan": [angkut, bongkar, pengiriman, freight, distribusi, logistik]
+  "Depresiasi & amortisasi": [depresiasi, amortisasi, penyusutan]
+  "Tenaga kerja": [gaji, upah, karyawan, tenaga kerja]
+core_inc_comp:
+  "Margin pembiayaan & kredit": [murabahah, istishna, ijarah, qardh, kredit, pinjaman yang diberikan, loan]
+  "Bagi hasil": [musyarakah, mudharabah, bagi hasil]
+  "Penempatan & surat berharga": [penempatan, surat berharga, obligasi, sukuk, giro pada]
+core_cost_comp:
+  "Deposito": [deposito, time deposit]
+  "Tabungan": [tabungan, saving]
+  "Giro": [giro, current account]
+  "Pinjaman & surat berharga": [pinjaman, sukuk, obligasi, investasi, sertifikat, musytarakah]
+noncore_comp:
+  "Fee & komisi": [provisi, komisi, fee, jasa]
+  "Pemulihan aset dihapusbukukan": [penerimaan kembali, hapus]
+  "Treasury & selisih kurs": [kurs, trading, surat berharga, perdagangan]
+opex_comp:
+  "Tenaga kerja": [gaji, karyawan, tenaga kerja, tunjangan]
+  "Umum & administrasi": [umum, administrasi]

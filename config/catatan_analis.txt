@@ -1,0 +1,5 @@
+# Catatan analis (opsional).
+# Satu baris per catatan, format:  KODE | PERIODE | kalimat konteks
+# Kalimat akan disisipkan di paragraf kesimpulan narasi periode tersebut.
+# Contoh:
+# WIFI | 1Q26 | Pertumbuhan segmen telekomunikasi sejalan dengan perluasan jaringan fiber ke luar Jawa.

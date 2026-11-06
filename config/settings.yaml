@@ -58,7 +58,7 @@ table:
 validation:
   pass_pct: 0.5               # selisih <= 0,5%  -> PASS
   fail_pct: 3.0               # selisih 0,5-3%   -> WARN (tetap dikirim); > 3% -> FAIL (tidak dikirim)
-  other_share_warn: 0.25      # baris "Others" > 25% dari totalnya -> WARN (pos mungkin terlewat)
+  other_share_warn: 0.20      # baris "Others" > 20% dari totalnya -> WARN + data gap
   rounding_note_pct: 3.0      # beda % (dari angka dibulatkan vs presisi penuh) > 3% relatif -> diberi catatan
 
 anomaly:
@@ -72,7 +72,7 @@ narrative:
   flat_pct: 1                 # |x| < 1%  -> stabil
   thin_pct: 5                 # 1-5%      -> tipis/moderat
   solid_pct: 15               # 5-15%     -> solid; > 15% -> kuat
-  margin_flat_bps: 50         # perubahan margin < 50 bps -> stabil
+  margin_flat_bps: 25         # perubahan margin/rasio < 25 bps -> relatif stabil
   bridge_gap_pp: 5            # jembatan laba bila selisih pertumbuhan > 5 pp (atau ada n.m.)
   base_effect_qoq_pct: 30     # |QoQ| > 30% -> sebut YoY + kemungkinan efek basis
   incremental_min_pct: 2      # analisis inkremental bila delta pendapatan > 2%
@@ -93,3 +93,19 @@ review:
 growth:
   near_zero_pct: 1            # |basis| < 1% dari pos induk -> n.m.
   net_extreme_pct: 500        # pos net (non-operasi, laba segmen) dengan growth > 500% -> n.m.
+
+structure:
+  asset_jump_ytd: 0.10        # aset/kredit/DPK/pendapatan berubah > 10% YtD -> cek perubahan struktur grup
+  # kata kunci hanya dihitung bila dalam kalimat yang sama ada tahun periode berjalan (bukan teks kebijakan akuntansi)
+  keywords: ["kehilangan pengendalian", "tidak lagi dikonsolidasikan", "dekonsolidasi", "loss of control",
+             "no longer consolidated", "deconsolidat", "divestasi", "pelepasan entitas anak", "akuisisi entitas anak"]
+watch:
+  net_cash_change: 0.25       # kas/utang bersih berubah > 25% YoY -> watch item
+pairs:                         # pos yang sering bergerak berlawanan -> dinarasikan gabungan
+  - ["Treasury & selisih kurs", "Lainnya"]
+frameworks:
+  cfo_to_profit_warn: 0.7     # arus kas operasi / laba < 0,7 -> watch item
+  wc_days_change: 10          # perubahan hari modal kerja > 10 hari -> dinarasikan
+learning:
+  gate_pct: 1.5               # perubahan baru hanya diadopsi bila penyimpangan <= 1,5% terhadap golden set
+  recurring_min_quarters: 3   # pos muncul >= 3 dari 4 kuartal terakhir -> dianggap rutin (bukan one-off)

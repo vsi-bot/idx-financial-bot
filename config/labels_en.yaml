@@ -4,6 +4,9 @@
 # Tambahkan baris di "exact" jika ada label yang terjemahannya kurang pas.
 # ============================================================
 exact:
+  "Bijih nikel": "Nickel ore"
+  "Penjualan bijih nikel": "Nickel ore sales"
+  "Treasury & lainnya": "Treasury & others"
   "Pendapatan keuangan": "Finance income"
   "Beban keuangan": "Finance costs"
   "Selisih kurs": "FX gains (losses)"
@@ -52,6 +55,12 @@ prefix:
   "beban ": "{} expenses"
   "segmen ": "{} segment"
 words:
+  bijih: ore
+  feronikel: ferronickel
+  matte: matte
+  premi: premium
+  klaim: claims
+  reasuransi: reinsurance
   batubara: coal
   emas: gold
   nikel: nickel

@@ -14,7 +14,7 @@ from core import config as cfg
 from core.storage import get_storage
 
 log = logging.getLogger(__name__)
-EDITABLE = ["watchlist.csv", "style_guide.yaml", "catatan_analis.txt", "review_ok.txt"]
+EDITABLE = ["watchlist.csv", "style_guide.yaml", "catatan_analis.txt", "review_ok.txt", "struktur.txt", "makro.txt", "koreksi.txt"]
 _cache: dict[str, str] = {}
 
 
@@ -65,3 +65,29 @@ def analyst_notes() -> dict[tuple[str, str], str]:
         if len(parts) == 3:
             notes[(parts[0].upper(), parts[1].upper())] = parts[2]
     return notes
+
+
+def _pipe_rows(name, n=3):
+    out = []
+    for line in load_text(name).splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            parts = [p.strip() for p in line.split("|", n - 1)]
+            if len(parts) == n:
+                out.append(parts)
+    return out
+
+
+def structure_notes() -> dict[tuple[str, str], str]:
+    return {(a.upper(), b.upper()): c for a, b, c in _pipe_rows("struktur.txt")}
+
+
+def macro_notes() -> list[tuple[str, str, str]]:
+    return [(a.upper(), b.upper(), c) for a, b, c in _pipe_rows("makro.txt")]
+
+
+def corrections() -> dict[str, set[str]]:
+    out = {}
+    for tk, item, kind in _pipe_rows("koreksi.txt"):
+        if kind.lower().startswith("rutin"):
+            out.setdefault(tk.upper(), set()).add(item)
+    return out

@@ -10,6 +10,7 @@ Aturan:
 """
 import json
 import logging
+import os
 
 from core import config as cfg
 from core import activity, discord
@@ -72,6 +73,12 @@ def stage(ticker: str, data: dict | None = None, force_periods: list[str] | None
             hold(P, f"template laporan baru ({data.get('industry') or data.get('template')}) perlu ditinjau sekali",
                  f"cek tabel di Excel emiten; jika benar, tambahkan {ticker} ke _Sistem/review_ok.txt")
             continue
+        if os.getenv("HOLD_PUBLISH") == "1":
+            hold(P, "gerbang mutu (golden set) gagal untuk versi kode/konfigurasi terbaru",
+                 "lihat job 'Gerbang mutu' di GitHub Actions; kembalikan perubahan terakhir atau perbarui snapshot")
+            continue
+        for u in table.get("untranslated", []):
+            holds.append({"type": "suggest", "text": f"{ticker}: {u}"})
         if table["status"] == "FAIL":
             failed = "; ".join(f"{c['name']} ({c['detail']})" for c in table["checks"] if c["status"] == "FAIL")
             activity.add(f"{ticker} {P.label}: TIDAK dikirim ke Discord karena validasi FAIL: {failed}", "error")
@@ -143,12 +150,13 @@ def send_outbox() -> int:
     ob, sent_dir = st.folder(OUTBOX), st.folder(SENT)
     files = {f["name"]: f for f in st.list(ob) if not f["is_folder"]}
     from core import notify
-    items, holds = [], []
+    items, holds, suggestions = [], [], []
     for name, f in files.items():
         if name.startswith("hold_") and name.endswith(".json"):
             local = cfg.WORK_DIR / f"ob_{name}"
             st.download(f["id"], local)
-            holds += json.loads(local.read_text(encoding="utf-8"))
+            for h in json.loads(local.read_text(encoding="utf-8")):
+                (suggestions.append(h["text"]) if h.get("type") == "suggest" else holds.append(h))
             st.move(f["id"], sent_dir, ob)
             continue
         if name.endswith(".json"):
@@ -157,6 +165,8 @@ def send_outbox() -> int:
             items.append((json.loads(local.read_text(encoding="utf-8")), f))
     items.sort(key=lambda x: (x[0]["ticker"], x[0]["period"]))
     n = 0
+    failed_send = False
+    sent_pairs = []
     for item, jf in items:
         imgf = files.get(item["image"])
         if not imgf:
@@ -164,7 +174,15 @@ def send_outbox() -> int:
             continue
         img = cfg.WORK_DIR / item["image"]
         st.download(imgf["id"], img)
-        discord.report(item["title"], item["paragraphs"], img, [], item["footer"])
+        if not discord.report(item["title"], item["paragraphs"], img, [], item["footer"]):
+            err = discord.LAST_ERROR or "galat tidak diketahui"
+            activity.add(f"{item['ticker']} {Period.parse_key(item['period']).label}: GAGAL dikirim ke Discord - {err}. "
+                         f"Laporan tetap di antrean dan dicoba lagi pada putaran berikutnya.", "error")
+            holds.append({"type": "hold", "ticker": item["ticker"], "period": Period.parse_key(item["period"]).label,
+                          "reason": f"gagal kirim ke Discord: {err}",
+                          "fix": "cek GitHub Secret DISCORD_WEBHOOK_URL (webhook masih aktif?); laporan dicoba ulang otomatis"})
+            failed_send = True
+            continue
         data = store.load(item["ticker"])
         pk = item["period"]
         if pk not in data["narrated"]:
@@ -181,6 +199,20 @@ def send_outbox() -> int:
         st.move(jf["id"], sent_dir, ob)
         st.move(imgf["id"], sent_dir, ob)
         activity.add(f"{item['ticker']} {Period.parse_key(pk).label}: terkirim ke Discord ({item['reason']}, {item['status']})", "ok")
+        sent_pairs.append((item["ticker"], Period.parse_key(pk).label))
         n += 1
     notify.record(holds)
+    notify.resolve(sent_pairs)
+    for sug in suggestions:
+        activity.add(f"usulan kamus: {sug}", "info")
+    if suggestions:
+        st_ = get_storage()
+        old = st_.read_text(cfg.FOLDERS["system"], "usulan_kamus.txt") or "# Label yang belum punya terjemahan / pemetaan (usulan, tinjau lalu tambahkan ke config).\n"
+        new = sorted(set(suggestions) - set(old.splitlines()))
+        if new:
+            path = cfg.WORK_DIR / "usulan_kamus.txt"
+            path.write_text(old.rstrip("\n") + "\n" + "\n".join(new) + "\n", encoding="utf-8")
+            st_.upload(path, st_.folder(cfg.FOLDERS["system"]), "usulan_kamus.txt", "text/plain")
+    if failed_send:
+        raise RuntimeError(f"Sebagian laporan gagal dikirim ke Discord: {discord.LAST_ERROR}")
     return n

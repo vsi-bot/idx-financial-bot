@@ -205,3 +205,15 @@ Setiap kali kode `DriveBridge.gs` diubah, buat versi deployment baru (Deploy →
   template baru (tinjau sekali lewat `_Sistem/review_ok.txt`), PDF tanpa Excel, kuota Apps Script.
 - Corporate presentation bank (opsional): nama file memuat "presentation/presentasi/investor", mis. `BBCA_9M26_presentation.pdf`.
 - Pengaturan baru di `config/settings.yaml` bagian `narrative`, `oneoff`, `review`.
+
+## Perubahan versi 4 (ringkas)
+
+- Narasi: headline bertema, penggerak bruto → penyeimbang → bersih, kata netral untuk biaya, kausalitas berbasis angka,
+  jembatan laba (volume vs tarif pajak, pos keuangan vs lain-lain), divergensi kuartalan bank, tanpa spekulasi.
+- Kerangka analisis: DuPont, operating leverage, interest coverage, utang bersih/EBITDA, arus kas & capex, siklus konversi kas;
+  bank: dekomposisi NII, kredit vs NII vs laba, provisi vs kredit, pembentukan modal internal.
+- Tabel: baris PBT/pajak/NCI bank, aturan n.m. per sifat pos, baris kosong & kembar tidak ditampilkan.
+- Validasi: kandidat pos tak terpetakan (bank), NCI, Q1+..+Qn = kumulatif, sinyal perubahan struktur grup.
+- File baru di `_Sistem`: `struktur.txt`, `makro.txt`, `koreksi.txt`, `usulan_kamus.txt` (dibuat otomatis).
+- Notifikasi: entri yang teratasi pindah ke bagian "SUDAH SELESAI".
+- Pertumbuhan terkendali: `tests/golden_gate.py` + job "Gerbang mutu" (toleransi 1,5%). Bila gagal, semua laporan ditahan.

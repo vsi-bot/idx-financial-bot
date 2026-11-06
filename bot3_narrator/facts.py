@@ -29,9 +29,12 @@ PROFIT_LABELS = {
 class Facts:
     def __init__(self, currency: str, table: dict):
         self.cur, self.t, self.items = currency, table, []
+        self.t.setdefault("template", table.get("template", ""))
         has_disc = bool(table["m"].get("net_profit_reported"))
         self.labels = dict(PROFIT_LABELS)
-        self.labels["net_profit"] = "laba bersih dari operasi berkelanjutan" if has_disc else "laba bersih atribusi induk"
+        has_nci = bool(table["m"].get("_has_nci"))
+        self.labels["net_profit"] = ("laba bersih dari operasi berkelanjutan" if has_disc
+                                     else "laba bersih atribusi induk" if has_nci else "laba bersih")
 
     def _reg(self, text, value, src, how, tol, label=None):
         self.items.append({"text": text, "value": value, "src": src, "how": how, "tol": tol, "label": label})
@@ -72,6 +75,16 @@ class Facts:
             raise NM()
         return self._reg(f"{idn(abs(x) * 100, 0)}%", abs(x), src, "share", 0.005)
 
+    def mult(self, x, src=None):
+        if x is None:
+            raise NM()
+        return self._reg(f"{idn(x, 2)}x", x, src, "ratio", 0.005)
+
+    def days(self, x, src=None):
+        if x is None:
+            raise NM()
+        return self._reg(f"{idn(round(x), 0)} hari", x, src, "ratio", 0.5)
+
     def label(self, key):
         return self.labels.get(key, key)
 
@@ -103,4 +116,8 @@ def check(paragraphs: list[str], facts: Facts) -> list[str]:
             bad.append(f"angka {f['text']} tidak cocok dengan tabel ({key})")
     if "n.m." in text:
         bad.append("narasi memuat n.m.")
+    if re.search(r"\bsearah\b", text, re.I):
+        bad.append("istilah 'searah' dilarang")
+    if facts.t.get("template", "").startswith("bank") and re.search(r"laba kotor|\bGPM\b|beban pokok", text, re.I):
+        bad.append("istilah nonbank di narasi bank")
     return sorted(set(bad))

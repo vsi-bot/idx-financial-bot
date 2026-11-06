@@ -67,7 +67,31 @@ def run_checks(c, m, rows, store, period: Period, has_disc: bool) -> dict:
     # 4. bank: laba operasional hasil hitung vs dilaporkan
     if tpl.startswith("bank") and d.get("op_reported"):
         g = abs(d.get("other_op_net") or 0) / abs(d["op_reported"])
-        add("Laba operasional bank (hitung vs laporan)", _tier(g), f"pos tak terpetakan {g * 100:.2f}%")
+        detail = f"pos tak terpetakan {g * 100:.2f}%"
+        if _tier(g) != "PASS":                       # sebutkan kandidat pos penyebab agar pemetaan bisa diperbaiki
+            diag = entry.get("diag") or {}
+            cand = sorted(((lbl, v) for lbl, v in (diag.get("buckets") or {}).get("noncore_income", [])),
+                          key=lambda x: -abs(x[1]))[:4]
+            if cand:
+                detail += "; kandidat pos: " + ", ".join(lbl for lbl, _ in cand)
+            if diag.get("skipped"):
+                detail += "; subtotal dilewati: " + ", ".join(diag["skipped"][:3])
+        add("Laba operasional bank (hitung vs laporan)", _tier(g), detail)
+    # NP atribusi = PBT - pajak + discontinued - NCI (bila ada NCI)
+    if all(k in d for k in ("pbt", "tax", "net_profit")) and d.get("np_nci"):
+        calc = d["pbt"] - d["tax"] + (d.get("np_disc") or 0) - d["np_nci"]
+        g = _gap(calc, d["net_profit"])
+        add("PBT - pajak - NCI = laba atribusi induk", _tier(g), f"selisih {g * 100:.2f}%")
+    # Q1 + Q2 + Q3 = kumulatif (dari angka yang ditampilkan)
+    if period.idx > 0:
+        div = 1e9 if store["currency"] == "IDR" else 1e6
+        for k in ("revenue", "net_profit") if tpl == "general" else ("nii", "net_profit"):
+            qs = [c.q(Period(period.year, i), k) for i in range(period.idx + 1)]
+            cum = c.cum(period, k)
+            if None not in qs and cum:
+                diff = abs(sum(round(q / div, 1) for q in qs) - round(cum / div, 1))
+                st_ = "PASS" if diff <= 0.05 * (period.idx + 1) + 1e-9 else _tier(_gap(sum(qs), cum))
+                add(f"Q1+..+Q{period.idx + 1} = kumulatif ({k})", st_, f"selisih {diff:.1f}")
 
     # 5. baris "Others" terlalu besar -> kemungkinan pos terlewat
     parent = None
@@ -104,8 +128,14 @@ def run_checks(c, m, rows, store, period: Period, has_disc: bool) -> dict:
             f"selisih {g * 100:.2f}% (bisa karena OCI/aksi korporasi)")
 
     status = max((ch["status"] for ch in checks), key=ORDER.get, default="PASS")
+    anomalies = _anomalies(c, m, period)
+    st_note, jumps = structure_signal(c, m, store, period)
+    if jumps and not st_note:
+        anomalies += [f"{nm} berubah {g * 100:+.1f}% YtD; perlu dicek di catatan laporan apakah ada perubahan struktur grup"
+                      for nm, g in jumps]
+    m["_structure"] = st_note
     return {"status": status, "checks": checks,
-            "anomalies": _anomalies(c, m, period),
+            "anomalies": anomalies,
             "footnotes": _footnotes(c, m, store, period, has_disc)}
 
 
@@ -135,12 +165,25 @@ def _anomalies(c, m, period: Period) -> list[str]:
     g_ = (m.get("r_gross_profit") or {}).get("vals")
     o_ = (m.get("r_operating_profit") or {}).get("vals")
     if g_ and o_ and None not in (g_[3], g_[4], o_[3], o_[4]) and g_[4] < g_[3] and o_[4] > o_[3]:
-        out.append(f"OPM {period.q_label} naik saat GPM turun QoQ, kemungkinan karena waktu belanja iklan, "
-                   f"reklasifikasi, atau pos sekali jadi")
+        out.append(f"OPM {period.q_label} naik saat GPM turun QoQ; penyebab penurunan beban usaha perlu dicek di "
+                   f"catatan laporan")
     npv = (m.get("net_profit") or {}).get("vals")
     if npv and None not in (npv[3], npv[4]) and (npv[3] > 0) != (npv[4] > 0):
         out.append(f"laba bersih kuartalan berbalik {'menjadi rugi' if npv[4] < 0 else 'menjadi laba'} pada {period.q_label}")
     return out
+
+
+def structure_signal(c, m, store, period: Period):
+    """Sinyal perubahan struktur grup: catatan manual/PDF, atau aset/kredit/DPK berubah > ambang YtD."""
+    e = store["periods"].get(period.key, {})
+    note = e.get("structure_note") or e.get("structure_kw")
+    lim = cfg.SETTINGS.get("structure", {}).get("asset_jump_ytd", 0.10)
+    jumps = []
+    for k, nm in (("bs_total_assets", "total aset"), ("bs_loans", "kredit"), ("bs_deposits", "DPK")):
+        cur, ye = c.bs(period, k), c.bs(Period(period.year - 1, 3), k)
+        if cur and ye and abs(cur / ye - 1) > lim:
+            jumps.append((nm, cur / ye - 1))
+    return note, jumps
 
 
 def _q_margin(c, p: Period, num, strict=False):
@@ -174,6 +217,12 @@ def _footnotes(c, m, store, period: Period, has_disc: bool) -> list[str]:
         notes.append("Prior-year quarter uses as-reported figures (no restatement detected).")
     if period.code == "audit":
         notes.append("4Q figures are derived as FY minus 9M and may include year-end audit adjustments.")
+    st_note, _ = structure_signal(c, m, store, period)
+    if st_note:
+        notes.append(f"Group structure change: {st_note}. YoY/YtD comparisons of affected items are not like-for-like.")
+    if store["template"].startswith("bank"):
+        notes.append("NIM (est.) = annualized net interest income / average earning assets (loans, placements, securities); "
+                     "LDR/FDR = loans / customer deposits; may differ from company-reported figures.")
     if getattr(c, "currency_mismatch", False):
         notes.append("Some comparatives are not shown because the reporting currency changed.")
     eq = c.bs(period, "bs_equity_parent")

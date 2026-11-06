@@ -81,7 +81,10 @@ def render(table: dict, company: str, ticker: str, currency: str, out: Path, max
         lab = r.get("label_en", r["label"])
         label = lab if len(lab) <= 52 else lab[:50] + "…"
         ax.text(0.30 if comp else 0.16, y + row_h / 2, label, fontsize=fs, color=color, va="center")
-        if r["fmt"] == "pct":
+        if r["fmt"] in ("x", "days"):
+            vals = ["" if v is None else (f"{v:.2f}x" if r["fmt"] == "x" else f"{v:.0f}") for v in r["vals"]]
+            grs = ["", "", ""]
+        elif r["fmt"] == "pct":
             vals = [_pct(v) for v in r["vals"]]
             grs = ["", "", ""]
         else:

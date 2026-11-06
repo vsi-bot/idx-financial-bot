@@ -1,0 +1,4 @@
+# Koreksi analis yang dipelajari bot (pertumbuhan terkendali).
+# Format: KODE | nama pos (seperti di tabel) | rutin
+# 'rutin' = pos ini berulang, jangan ditandai one-off.
+# Contoh: BBRI | Pemulihan aset dihapusbukukan | rutin

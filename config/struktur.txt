@@ -1,0 +1,3 @@
+# Perubahan struktur grup (dekonsolidasi, akuisisi, merger, spin-off) - diisi manual bila perlu.
+# Format: KODE | PERIODE | keterangan singkat
+# Contoh: BMRI | 3Q26 | BSI tidak lagi dikonsolidasikan sejak 1 Februari 2026

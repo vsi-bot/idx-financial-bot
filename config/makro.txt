@@ -1,0 +1,3 @@
+# Data makro (opsional, diisi analis). Disisipkan ke narasi emiten/sektor yang cocok.
+# Format: PERIODE | KODE atau SEKTOR | kalimat berisi angka
+# Contoh: 3Q26 | Energy | Harga acuan batu bara rata-rata 3Q26 USD110 per ton, turun dari USD125 pada 3Q25.

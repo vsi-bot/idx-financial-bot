@@ -80,6 +80,14 @@ def run(ticker: str, force: bool = False) -> dict:
             if not segments:
                 log.info("%s %s: tabel segmen di PDF tidak terbaca/tidak cocok, dilewati.", ticker, p.label)
         store.ingest(data, parsed, segments, sig)
+        from core.sysfiles import structure_notes
+        manual = structure_notes().get((ticker, p.label))
+        if manual:
+            data["periods"][p.key]["structure_note"] = manual
+        elif pdf:
+            kw = _structure_keywords(local_p, p.year)
+            if kw:
+                data["periods"][p.key]["structure_kw"] = kw
         if pres and parsed["template"].startswith("bank"):
             local_s = cfg.WORK_DIR / f"{ticker}_{p.label}_pres.pdf"
             st.download(pres["id"], local_s)
@@ -107,3 +115,26 @@ def run(ticker: str, force: bool = False) -> dict:
     store.save(data)
     data["_updated"] = updated
     return data
+
+
+def _structure_keywords(pdf_path, year: int):
+    """Cari indikasi perubahan struktur grup di PDF; kembalikan potongan kalimat (tanpa menebak)."""
+    import re as _re
+    from pypdf import PdfReader
+    words = cfg.SETTINGS.get("structure", {}).get("keywords", [])
+    try:
+        r = PdfReader(str(pdf_path))
+        if r.is_encrypted:
+            r.decrypt("")
+        for page in r.pages[:120]:
+            t = _re.sub(r"\s+", " ", page.extract_text() or "")
+            low = t.lower()
+            for w in words:
+                for mt in _re.finditer(_re.escape(w.lower()), low):
+                    i = mt.start()
+                    window = t[max(0, i - 150):i + 200]
+                    if str(year) in window:          # peristiwa tahun berjalan, bukan kebijakan akuntansi umum
+                        return "laporan menyebut '" + t[max(0, i - 60):i + 120].strip() + "'"
+    except Exception:
+        return None
+    return None

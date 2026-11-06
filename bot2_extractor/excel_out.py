@@ -60,7 +60,11 @@ def write_period_sheet(wb: Workbook, title: str, table: dict, company: str, tick
         vcols = [2, 3, 5, 6, 7]
         for v, col in zip(row["vals"], vcols):
             cell = ws.cell(row=r, column=col)
-            if row["fmt"] == "pct":
+            if row["fmt"] in ("x", "days"):
+                if v is not None:
+                    cell.value = round(v, 2) if row["fmt"] == "x" else round(v)
+                cell.number_format = '0.00"x"' if row["fmt"] == "x" else '0'
+            elif row["fmt"] == "pct":
                 ro = row.get("ratio_of")
                 if ro and ro[0] in row_of and ro[1] in row_of:
                     L = get_column_letter(col)

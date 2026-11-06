@@ -333,8 +333,15 @@ def _bank(wb, o: Out, isr, bs):
     if not any(r["en"].lower() in CORE_INC for r in isr):
         return False
     sums = {k: {"cur": 0.0, "prior": 0.0} for k in ("core_income", "core_cost", "noncore_income", "opex", "provision")}
+    o.diag = {"buckets": {}, "skipped": []}
     for r in isr:
         en = r["en"].lower()
+        # subtotal (mis. "Net interest income", "Total ...") dilewati agar tidak terhitung dua kali
+        if en.startswith(("total ", "subtotal", "jumlah", "net interest", "net sharia", "net revenue from",
+                          "net income from", "interest and sharia income - net")) and \
+                not en.startswith(("total profit from operation", "total profit (loss) from operation")):
+            o.diag["skipped"].append(r["en"])
+            continue
         if en.startswith("total profit from operation") or en.startswith("total profit (loss) from operation"):
             o.put_row("op_reported", r)
             break
@@ -355,6 +362,8 @@ def _bank(wb, o: Out, isr, bs):
                 bucket, val = "noncore_income", v
                 getattr(o, side)[f"noncore_comp::{r['id']}"] = v * o.f
             sums[bucket][side] += val
+            if side == "cur":
+                o.diag["buckets"].setdefault(bucket, []).append((r["en"], val * o.f))
     for k, v in sums.items():
         o.put(k, v["cur"], v["prior"])
     for side in ("cur", "prior"):
@@ -434,6 +443,19 @@ def parse(path) -> dict:
     is_sharia = any(r["en"].lower() == "revenue from fund management as mudharib" and r["cur"] for r in isr)
     cf = _pick(wb, "Statement of cash flows")
     o.put_row("cf_dividends", _fk(cf, "dividends_paid"), abs)
+    o.put_row("cf_cfo", _fk(cf, "cfo"))
+    o.put_row("cf_capex", _fk(cf, "capex"), abs)
+    o.put_row("cf_dna", _fk(cf, "dna"), abs)
+    for key, item in (("bs_receivables", "receivables"), ("bs_inventories", "inventories"), ("bs_payables", "payables")):
+        frags = [_n(x) for x in LINE_ITEMS.get(item, {}).get("contains", [])]
+        tot = {"cur": None, "prior": None}
+        for r in bs:
+            en = _n(r["en"])
+            if any(f in en for f in frags) and not en.startswith("total") and "allowance" not in en and "non current" not in en:
+                for side in ("cur", "prior"):
+                    if r[side] is not None:
+                        tot[side] = (tot[side] or 0) + r[side]
+        o.put(key, tot["cur"], tot["prior"])
     if _bank(wb, o, isr, bs):
         template = "bank_sharia" if is_sharia else "bank"
     elif _general(wb, o, isr, bs):
@@ -446,7 +468,7 @@ def parse(path) -> dict:
         "currency": meta["currency"], "template": template,
         "industry": meta["industry"], "subsector": meta["subsector"], "audit": meta["audit"],
         "fiscal_ok": meta["fiscal_ok"],
-        "cur": o.cur, "prior": o.prior,
+        "cur": o.cur, "prior": o.prior, "diag": getattr(o, "diag", None),
         # pembanding laba rugi = periode sama tahun lalu; pembanding neraca = akhir tahun lalu
         "prior_is_period": Period(p.year - 1, p.idx).key,
         "prior_bs_period": Period(p.year - 1, 3).key,

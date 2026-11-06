@@ -127,3 +127,43 @@ dividends_paid:
   - payment of dividend
   - payments of dividend
   - dividend payment
+receivables:
+  exact:
+  - Trade receivables third parties
+  - Trade receivables related parties
+  - Trade receivables
+  contains:
+  - trade receivable
+inventories:
+  exact:
+  - Current inventories
+  - Inventories
+  contains:
+  - inventories
+payables:
+  exact:
+  - Trade payables third parties
+  - Trade payables related parties
+  - Trade payables
+  contains:
+  - trade payable
+cfo:
+  exact:
+  - Total net cash flows received from (used in) operating activities
+  - Net cash flows received from (used in) operating activities
+  contains:
+  - from (used in) operating activities
+capex:
+  exact:
+  - Payments for acquisition of property, plant and equipment
+  - Acquisition of property, plant and equipment
+  contains:
+  - acquisition of property, plant
+  - purchase of property, plant
+  - payments for property, plant
+dna:
+  exact:
+  - Depreciation and amortization
+  - Depreciation of property, plant and equipment
+  contains:
+  - depreciation

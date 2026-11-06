@@ -1,3 +1,4 @@
+import re
 """Perhitungan: angka kumulatif, kuartal murni, QoQ, YoY, rasio, dan model tabel."""
 from core.fmt import growth, safe_div
 from core.periods import Period
@@ -196,7 +197,14 @@ def build(store: dict, period: Period) -> dict:
 
     G = _cfg.SETTINGS.get("growth", {})
 
-    def nm_rules(g, vals, parent, net, always_nm):
+    EXP_KEYS = {"cogs", "opex", "selling_exp", "ga_exp", "fin_cost", "tax", "provision", "core_cost", "np_nci", "cf_capex"}
+    EXP_PREFIX = ("cogs_comp", "opex_comp", "core_cost_comp")
+
+    def is_expense(key, label):
+        k = str(key or "")
+        return k in EXP_KEYS or k.startswith(EXP_PREFIX) or str(label).lower().startswith(("beban", "biaya", "hak pihak"))
+
+    def nm_rules(g, vals, parent, net, always_nm, expense=False):
         """Aturan n.m. tambahan: basis mendekati nol vs pos induk, pos net ekstrem, pos yang selalu n.m."""
         if always_nm:
             return [None, None, None]
@@ -204,7 +212,10 @@ def build(store: dict, period: Period) -> dict:
         for j, bi in enumerate((0, 3, 2)):
             if out[j] is None:
                 continue
-            base = vals[bi]
+            base, cur = vals[bi], vals[(1, 4, 4)[j]]
+            if not expense and base is not None and cur is not None and base < 0 and cur < 0:
+                out[j] = None            # pos pendapatan negatif di kedua periode: "rugi menyempit/melebar" -> n.m.
+                continue
             pb = (m.get(parent) or {}).get("vals", [None] * 5)[bi] if parent else None
             if pb and base is not None and abs(base) < abs(pb) * G.get("near_zero_pct", 1) / 100:
                 out[j] = None
@@ -226,7 +237,13 @@ def build(store: dict, period: Period) -> dict:
         else:
             g = [None, None, None]
         if fmt == "num":
-            g = nm_rules(g, vals, parent, net, always_nm)
+            g = nm_rules(g, vals, parent, net, always_nm, is_expense(key, label))
+        if fmt != "num" and fmt == "pct":
+            vals = [None if v is None else round(v, 4) for v in vals]     # bps dari persentase yang ditampilkan
+        if all(v is None for v in vals):
+            if key:
+                m[key] = {"vals": vals, "growth": [None] * 3, "label": label}
+            return vals                                                   # baris kosong tidak ditampilkan
         rows.append({"label": label, "key": key, "kind": kind, "fmt": fmt, "vals": vals, "growth": g,
                      "ratio_of": ratio_of, "round_note": notes, "basis": c.basis.get(key) if key else None})
         if key:
@@ -250,6 +267,13 @@ def build(store: dict, period: Period) -> dict:
         if not items:
             return []
         agg = {g: _sum_lists(vs) for g, vs in items.items()}
+        for a_, b_ in _cfg.SETTINGS.get("pairs", []):
+            if a_ in agg and b_ in agg:
+                va, vb = agg[a_], agg[b_]
+                opp = sum(1 for x, y in ((1, 0), (4, 3), (4, 2))
+                          if None not in (va[x], va[y], vb[x], vb[y]) and (va[x] - va[y]) * (vb[x] - vb[y]) < 0)
+                if opp >= 2:
+                    agg[f"{a_.split(' &')[0]} & lainnya"] = _sum_lists([agg.pop(a_), agg.pop(b_)])
         if total_key and total_key in m:                      # selisih ke total masuk "Lainnya"
             tot = m[total_key]["vals"]
             res = [None if t is None else t - sum((v[i] or 0) for v in agg.values()) for i, t in enumerate(tot)]
@@ -292,15 +316,25 @@ def build(store: dict, period: Period) -> dict:
         has_disc = any(v for v in c.flow("np_disc") if v)
         if has_disc:
             add("Profit from Continuing Operations", "np_cont")
-            add("Profit from Discontinued Operations", "np_disc", net=True)
+            add("Profit from Discontinued Operations", "np_disc", always_nm=True)
             if any(v for v in c.flow("np_nci") if v):
                 add("Net Profit (total)", "np_total")
-        add("Net Profit attributable to parent" if has_disc else "Net Profit", "net_profit")
+        has_nci = any(v for v in c.flow("np_nci") if v)
+        if has_nci and not has_disc:
+            add("Non-controlling Interests", "np_nci")
+        add("Net Profit attributable to parent" if (has_disc or has_nci) else "Net Profit", "net_profit")
+        NPK = "net_profit"
         if has_disc:
-            add("Core Net Profit (excl. discontinued)", "net_profit_core")
+            if has_nci:                                   # baris inti hanya bila berbeda dari laba berkelanjutan
+                add("Core Net Profit (excl. discontinued)", "net_profit_core")
+                NPK = "net_profit_core"
+            else:
+                v = c.flow("net_profit_core")
+                m["net_profit_core"] = {"vals": v, "growth": growths(v), "label": "core"}
+                NPK = "np_cont"
             m["net_profit_reported"] = m["net_profit"]
             m["net_profit"] = m["net_profit_core"]        # rasio & narasi memakai laba inti
-        NPK = "net_profit_core" if has_disc else "net_profit"
+        m["_has_nci"] = has_nci
         if c.keys_with("seg_profit"):
             rows.append({"label": f"Segment Profit - {unit}", "kind": "section"})
             components("seg_profit", None, other="Lainnya & eliminasi")
@@ -319,6 +353,32 @@ def build(store: dict, period: Period) -> dict:
         nd = [None if (d is None or ca is None) else d - ca for d, ca in zip(debt, cash)]
         eq = c.stock("bs_equity_parent")
         add("Net Debt to Equity", "r_nde", ratio_vals(nd, eq), kind="ratio", fmt="pct")
+        # --- kerangka analisis: DuPont, kemampuan bayar, arus kas, modal kerja
+        ann_rev = annualize(rev, period)
+        avg_ta, avg_eq = c.avg_stock("bs_total_assets"), c.avg_stock("bs_equity_parent")
+        add("Asset Turnover (x)", "r_at", ratio_vals(ann_rev, avg_ta), kind="ratio", fmt="x")
+        add("Equity Multiplier (x)", "r_em", ratio_vals(avg_ta, avg_eq), kind="ratio", fmt="x")
+        fc = [None if v is None else abs(v) for v in c.flow("fin_cost")]
+        add("Interest Coverage (x)", "r_icr", ratio_vals(m["operating_profit"]["vals"], fc), kind="ratio", fmt="x")
+        ebitda = [None if (a is None or b is None) else a + b for a, b in zip(m["operating_profit"]["vals"], c.flow("cf_dna"))]
+        nde_ = [None if (x is None or y is None or y <= 0) else x / y for x, y in zip(nd, annualize(ebitda, period))]
+        add("Net Debt to EBITDA (x)", "r_nd_ebitda", nde_, kind="ratio", fmt="x")
+        cogs_ann = annualize(m["cogs"]["vals"], period)
+        days = lambda st_, fl: [None if (a is None or b in (None, 0)) else a / b * 365 for a, b in zip(st_, fl)]  # noqa: E731
+        dso, dio, dpo = days(c.stock("bs_receivables"), ann_rev), days(c.stock("bs_inventories"), cogs_ann), \
+            days(c.stock("bs_payables"), cogs_ann)
+        ccc = [None if None in (a, b, d) else a + b - d for a, b, d in zip(dso, dio, dpo)]
+        add("Cash Conversion Cycle (days)", "r_ccc", ccc, kind="ratio", fmt="days")
+        for k, v in (("r_dso", dso), ("r_dio", dio), ("r_dpo", dpo)):
+            m[k] = {"vals": v, "growth": [None] * 3, "label": k}
+        if any(v for v in c.flow("cf_cfo")):
+            rows.append({"label": f"Cash Flow - {unit}", "kind": "section"})
+            add("Operating Cash Flow", "cf_cfo")
+            add("Capex", "cf_capex")
+            add("CFO to Net Profit", "r_cfo_np", ratio_vals(m["cf_cfo"]["vals"], m["net_profit"]["vals"]), kind="ratio", fmt="pct")
+            add("Capex to Revenue", "r_capex_rev", ratio_vals(m["cf_capex"]["vals"], rev), kind="ratio", fmt="pct")
+        g_op, g_rev = m["operating_profit"]["growth"][0], m["revenue"]["growth"][0]
+        m["_op_leverage"] = None if not g_op or not g_rev or abs(g_rev) < 0.02 else g_op / g_rev
         rows.append({"label": f"Balance Sheet - {unit}", "kind": "section"})
         add("Net Debt (Cash)", "bs_net_debt", nd, always_nm=True)     # narasi memakai perubahan nominal
         add("Equity (parent)", "bs_equity_parent", eq)
@@ -335,15 +395,23 @@ def build(store: dict, period: Period) -> dict:
         add("Operating Expenses", "opex")
         add("Pre-Provision Operating Profit (PPOP)", "ppop")
         add("Provision Expenses", "provision")
+        add("Operating Profit", "operating_profit")
+        add("Profit Before Tax", "pbt")
+        add("Tax Expense", "tax")
+        has_nci = any(v for v in c.flow("np_nci") if v)
+        if has_nci:
+            add("Non-controlling Interests", "np_nci")
+        m["_has_nci"] = has_nci
         has_disc = any(v for v in c.flow("np_disc") if v)
         if has_disc:
-            add("Profit from Discontinued Operations", "np_disc")
-        add("Net Profit attributable to parent" if has_disc else "Net Profit", "net_profit")
+            add("Profit from Discontinued Operations", "np_disc", always_nm=True)
+        add("Net Profit attributable to parent" if (has_disc or has_nci) else "Net Profit", "net_profit")
         if has_disc:
-            add("Core Net Profit (excl. discontinued)", "net_profit_core")
+            v = c.flow("net_profit_core")
+            m["net_profit_core"] = {"vals": v, "growth": growths(v), "label": "core"}
             m["net_profit_reported"] = m["net_profit"]
             m["net_profit"] = m["net_profit_core"]
-        for k in ("operating_profit", "pbt", "tax", "total_op_income"):
+        for k in ("total_op_income",):
             v = c.flow(k)
             m[k] = {"vals": v, "growth": growths(v), "label": k}
         if c.keys_with("seg_profit"):
@@ -356,9 +424,21 @@ def build(store: dict, period: Period) -> dict:
         loans = c.stock("bs_loans")
         coc = ratio_vals(annualize(m["provision"]["vals"], period), c.avg_stock("bs_loans"))
         add("Cost of Credit (annualized)", "r_coc", coc, kind="ratio", fmt="pct")
-        nim = ratio_vals(annualize(m["nii"]["vals"], period), c.avg_stock("bs_earning_assets"))
+        avg_ea = c.avg_stock("bs_earning_assets")
+        nim = ratio_vals(annualize(m["nii"]["vals"], period), avg_ea)
         if any(v for v in nim if v):
             add("NIM (est.)", "r_nim", nim, kind="ratio", fmt="pct")
+            # dekomposisi NII kumulatif YoY: efek volume (aset produktif) vs efek margin (NIM)
+            if None not in (avg_ea[0], avg_ea[1], nim[0], nim[1]):
+                f_ = period.quarters / 4
+                vol = (avg_ea[1] - avg_ea[0]) * nim[0] * f_
+                price = (nim[1] - nim[0]) * avg_ea[1] * f_
+                m["_nii_vol"], m["_nii_price"] = vol, price
+        # pembentukan modal internal = ROE x (1 - rasio dividen)
+        np_fy = c.cum(Period(period.year - 1, 3), "net_profit")
+        div = c.cum(period, "cf_dividends")
+        roe_now = None
+        m["_icg"] = None
         _roe(c, m, add, period)
         dep = c.stock("bs_deposits")
         casa = [None if (a is None or b is None) else a + b for a, b in zip(c.stock("dep_current"), c.stock("dep_savings"))]
@@ -383,6 +463,9 @@ def build(store: dict, period: Period) -> dict:
                     add(lbl, f"p_{k}", [pres_py.get(k), pres_now.get(k), pres_py.get(k), pres_prev.get(k),
                                          pres_now.get(k)], kind="ratio", fmt="pct")
         ye = Period(period.year - 1, 3)
+        roe_now = (m.get("r_roe") or {}).get("vals", [None] * 5)[1]
+        if roe_now is not None and np_fy and div is not None and np_fy > 0:
+            m["_icg"] = roe_now * (1 - min(div / np_fy, 1))
         m["ytd_loans"] = growth(loans[1], c.bs(ye, "bs_loans"))
         m["ytd_deposits"] = growth(dep[1], c.bs(ye, "bs_deposits"))
 
@@ -394,12 +477,17 @@ def build(store: dict, period: Period) -> dict:
     from bot2_extractor.validate import run_checks
     checks = run_checks(c, m, rows, store, period, has_disc)
     from core.labels import to_en
+    untranslated = []
+    ID_WORDS = re.compile(r"\b(pendapatan|beban|penjualan|biaya|bijih|jasa|lainnya|keuangan|usaha|pokok|laba|rugi)\b", re.I)
     for r in rows:                      # label tabel berbahasa Inggris; "label" (Indonesia) dipakai narasi
         r["label_en"] = to_en(r["label"], store)
+        if r["kind"] != "section" and ID_WORDS.search(r["label_en"]):
+            untranslated.append(f"label belum diterjemahkan: '{r['label']}' -> '{r['label_en']}'")
     cols = [period.same_last_year().cum_label, period.cum_label, period.same_last_year().q_label,
             period.prev().q_label, period.q_label]
     return {"rows": rows, "m": m, "cols": cols, "unit": unit, "period": period, "template": tpl,
-            "q_available": m["net_profit"]["vals"][4] is not None, "decimals": DEC, **checks}
+            "q_available": m["net_profit"]["vals"][4] is not None, "decimals": DEC,
+            "untranslated": untranslated, **checks}
 
 
 def _roe(c: Calc, m, add, period: Period):

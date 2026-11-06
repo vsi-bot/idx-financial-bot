@@ -70,6 +70,7 @@ def process_inbox(st, state, wl) -> set[str]:
         discord.status(f"Inbox berisi {len(items)} file; {limit} diproses sekarang, sisanya di putaran berikutnya.")
         items = items[:limit]
     start = cfg.DATA["start_year"]
+    excel_in = []
     for f, parent, hint in items:
         local = cfg.WORK_DIR / f"inbox_{re.sub(r'[^A-Za-z0-9._-]', '_', f['name'])}"
         res = identify(f["name"], wl, hint)              # 1) cukup dari nama file / subfolder
@@ -101,6 +102,8 @@ def process_inbox(st, state, wl) -> set[str]:
         else:
             changed.add(tk)
             discord.status(f"{tk} {p.label}: **{f['name']}** received from Inbox (identified by {how}){note}.", "ok")
+            if f["name"].lower().endswith(".xlsx"):
+                excel_in.append((tk, p.label))
     # periode yang baru punya PDF tanpa Excel -> notifikasi "menunggu Excel"
     from core import notify
     waiting = []
@@ -113,6 +116,7 @@ def process_inbox(st, state, wl) -> set[str]:
                 waiting.append({"ticker": tk, "period": p.label, "reason": "baru ada PDF, file Excel belum diunggah",
                                 "fix": f"unggah FinancialStatement-{p.year}-...-{tk}.xlsx ke Inbox"})
     notify.record(waiting)
+    notify.resolve(excel_in)
     return changed
 
 

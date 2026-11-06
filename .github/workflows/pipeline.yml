@@ -25,6 +25,10 @@ on:
         description: "Paksa scraper IDX jalan sekarang (hanya jika scraper diaktifkan)"
         type: boolean
         default: false
+      golden:
+        description: "Golden set: 'record' = simpan snapshot baru dari output saat ini (setelah diverifikasi)"
+        required: false
+        default: ""
 
 concurrency:
   group: idx-financial-bot          # hanya satu proses berjalan dalam satu waktu
@@ -39,8 +43,37 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  gate:
+    name: Gerbang mutu (golden set, toleransi 1,5%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      result: ${{ steps.gate.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - id: gate
+        continue-on-error: true
+        run: |
+          if [ "${{ inputs.golden }}" = "record" ]; then
+            python tests/golden_gate.py --record
+            git config user.name "idx-bot"; git config user.email "idx-bot@users.noreply.github.com"
+            git add tests/golden/snapshot.json && git commit -m "Perbarui snapshot golden set" && git push || true
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            python tests/golden_gate.py --check
+          fi
+
   collect:
     name: Bot 1 - Kumpulkan laporan
+    needs: gate
+    if: always()
     runs-on: ${{ vars.COLLECTOR_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 60
     outputs:
@@ -60,8 +93,10 @@ jobs:
 
   process:
     name: Bot 2 & 3 - ${{ matrix.ticker }}
-    needs: collect
-    if: needs.collect.outputs.tickers != '' && needs.collect.outputs.tickers != '[]'
+    needs: [gate, collect]
+    env:
+      HOLD_PUBLISH: ${{ needs.gate.outputs.result == 'fail' && '1' || '0' }}
+    if: always() && needs.collect.result == 'success' && needs.collect.outputs.tickers != '' && needs.collect.outputs.tickers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

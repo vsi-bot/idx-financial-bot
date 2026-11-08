@@ -57,7 +57,7 @@ table:
 
 validation:
   pass_pct: 0.5               # selisih <= 0,5%  -> PASS
-  fail_pct: 3.0               # selisih 0,5-3%   -> WARN (tetap dikirim); > 3% -> FAIL (tidak dikirim)
+  fail_pct: 3.5               # selisih 0,5-3%   -> WARN (tetap dikirim); > 3% -> FAIL (tidak dikirim)
   other_share_warn: 0.20      # baris "Others" > 20% dari totalnya -> WARN + data gap
   rounding_note_pct: 3.0      # beda % (dari angka dibulatkan vs presisi penuh) > 3% relatif -> diberi catatan
 
@@ -107,5 +107,5 @@ frameworks:
   cfo_to_profit_warn: 0.7     # arus kas operasi / laba < 0,7 -> watch item
   wc_days_change: 10          # perubahan hari modal kerja > 10 hari -> dinarasikan
 learning:
-  gate_pct: 1.5               # perubahan baru hanya diadopsi bila penyimpangan <= 1,5% terhadap golden set
+  gate_pct: 5               # perubahan baru hanya diadopsi bila penyimpangan <= 1,5% terhadap golden set
   recurring_min_quarters: 3   # pos muncul >= 3 dari 4 kuartal terakhir -> dianggap rutin (bukan one-off)

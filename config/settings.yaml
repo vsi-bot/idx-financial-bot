@@ -113,7 +113,7 @@ learning:
 claude_manual:
   # Emiten yang narasinya ditulis Claude lewat chat (semi-manual, langganan Team).
   # Kosongkan untuk mematikan. "ALL" = semua emiten.
-  tickers: []
+  tickers: [ALL]
   wait_hours: 4               # bila narasi Claude belum masuk dalam 4 jam, narasi otomatis dikirim
   prompt_folder: "untuk_claude"
   answer_folder: "dari_claude"

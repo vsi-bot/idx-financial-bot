@@ -1,0 +1,9 @@
+.env
+token.json
+credentials.json
+scripts/token.json
+scripts/credentials.json
+.work/
+local_drive/
+__pycache__/
+*.pyc

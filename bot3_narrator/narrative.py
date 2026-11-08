@@ -292,9 +292,13 @@ def _general(c: Ctx):
     title = theme_title(c, False) or f"{tk} {c.p.label}: {a}, {b}"
 
     # P1 headline
-    s1 = say(lambda: f"{tk} membukukan pendapatan {L} yang {movement(c, 'revenue')}.")
+    s1 = say(lambda: c.pick(f"{tk} membukukan pendapatan {L} yang {movement(c, 'revenue')}.",
+                            f"Pada {L}, pendapatan {tk} {movement(c, 'revenue')}.",
+                            f"Kinerja {tk} pada {L} diawali pendapatan yang {movement(c, 'revenue')}.",
+                            f"Dari sisi top-line, pendapatan {tk} pada {L} {movement(c, 'revenue')}."))
     s2 = say(lambda: quarter_clause(c, "revenue", "pendapatan"))
-    s3 = say(lambda: f"Di level bottom-line, {F.label('net_profit')} {movement(c, 'net_profit', label_profit=True)}.")
+    s3 = say(lambda: c.pick("Di level bottom-line, ", "Sementara itu, ", "Pada baris terbawah, ", "Adapun ")
+             + f"{F.label('net_profit')} {movement(c, 'net_profit', label_profit=True)}.")
     rep = c.m.get("net_profit_reported")
     s4 = None
     if rep:
@@ -324,7 +328,8 @@ def _general(c: Ctx):
     paras.append(" ".join(x for x in p2 if x) or None)
 
     # P3 biaya
-    p3 = [say(lambda: f"Dari sisi biaya, beban pokok pendapatan {movement(c, 'cogs')}."),
+    p3 = [say(lambda: c.pick("Dari sisi biaya, ", "Di sisi beban, ", "Pada struktur biaya, ")
+              + f"beban pokok pendapatan {movement(c, 'cogs')}."),
           say(lambda: drivers(c, "cogs_comp", "cogs", "beban pokok"))]
     ro, ro0 = c.m.get("r_opex", {}).get("vals", [None] * 5)[1], c.m.get("r_opex", {}).get("vals", [None] * 5)[0]
     if ro is not None and ro0 is not None and abs(ro - ro0) >= 0.005:
@@ -350,7 +355,8 @@ def _general(c: Ctx):
         deltas[nm] = cur - base
         p4.append(f"{nm} {F.level(cur, (k, 1))} ({F.bps(cur - base)})")
     if p4:
-        txt = "Dari sisi profitabilitas, " + ", ".join(p4) + f" dibanding {c.Lpy}."
+        txt = c.pick("Dari sisi profitabilitas, ", "Pada level margin, ", "Ditinjau dari profitabilitas, ") \
+            + ", ".join(p4) + f" dibanding {c.Lpy}."
         neg = {k: v for k, v in deltas.items() if v < 0}
         if neg:
             lvl = min(neg, key=neg.get)
@@ -446,7 +452,9 @@ def _bank(c: Ctx):
                                       "turun": "Laba Bersih Melemah", None: "Kinerja Laba"}[dn]
     title = theme_title(c, True) or title
     paras = []
-    p1 = [say(lambda: f"{tk} membukukan {F.label('net_profit')} {L} yang {movement(c, 'net_profit')}."),
+    p1 = [say(lambda: c.pick(f"{tk} membukukan {F.label('net_profit')} {L} yang {movement(c, 'net_profit')}.",
+                             f"Pada {L}, {F.label('net_profit')} {tk} {movement(c, 'net_profit')}.",
+                             f"Kinerja {tk} pada {L} ditandai {F.label('net_profit')} yang {movement(c, 'net_profit')}.")),
           say(lambda: f"Pendapatan operasional bank (NII ditambah pendapatan non-bunga) {movement(c, 'total_op_income')}, "
                       f"dengan {nii_lbl} {movement(c, 'nii')}."),
           say(lambda: quarter_clause(c, "net_profit", "laba bersih"))]
@@ -516,7 +524,7 @@ MARGIN = {"naik": "dengan profitabilitas operasional yang membaik", "stabil": "d
 def conclusion(c: Ctx, dr, dm, dn, bridged, bank=False):
     if dr is None or dn is None:
         return f"Secara keseluruhan, sebagian pembanding {c.L} tidak tersedia pada basis yang sebanding, sehingga kesimpulan difokuskan pada level kinerja periode berjalan."
-    txt = f"Secara keseluruhan, {BASE[(dr, dn)]}"
+    txt = c.pick("Secara keseluruhan, ", "Menimbang hasil tersebut, ", "Kesimpulannya, ", "Dengan demikian, ") + BASE[(dr, dn)]
     if dm:
         txt += " " + ({"naik": "dengan efisiensi biaya yang membaik", "stabil": "dengan efisiensi biaya yang terjaga",
                         "turun": "dengan efisiensi biaya yang melemah"}[dm] if bank else MARGIN[dm])
@@ -562,7 +570,9 @@ def watch_paragraph(c: Ctx, items):
     if not items:
         return None
     nxt = c.p.next().label
-    return f"Hal yang perlu dicermati pada {nxt}: " + "; ".join(f"({i}) {t}" for i, t in enumerate(items, 1)) + "."
+    intro = c.pick(f"Hal yang perlu dicermati pada {nxt}: ", f"Ke depan, investor perlu memantau beberapa hal pada {nxt}: ",
+                   f"Fokus pemantauan untuk {nxt}: ")
+    return intro + "; ".join(f"({i}) {t}" for i, t in enumerate(items, 1)) + "."
 
 
 # ------------------------------------------------------------------ utama

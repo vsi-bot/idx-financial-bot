@@ -105,6 +105,15 @@ def stage(ticker: str, data: dict | None = None, force_periods: list[str] | None
             title += " (koreksi)"
         if reason == "update":
             title += " (pembaruan: data kuartalan lengkap)"
+        # potensi katalis positif dari RSS Google News (link sumber wajib)
+        from bot3_narrator import catalysts as cat_mod
+        cat_items = cat_mod.fetch(ticker, data.get("name", ticker))
+        ctext = cat_mod.to_text(cat_items)
+        if ctext:
+            ctext = narrative._register_numbers(facts, ctext, convert=False)
+            last = paras[-1] if paras else ""
+            pos = len(paras) - 1 if last.startswith(("Hal yang", "Ke depan", "Fokus pemantauan")) else len(paras)
+            paras.insert(pos, ctext)
         bad = check(paras, facts)
         if bad:
             hold(P, "narasi gagal checklist: " + "; ".join(bad[:4]), "laporan pengembang; data tabel tetap tersimpan di Excel")
@@ -123,9 +132,23 @@ def stage(ticker: str, data: dict | None = None, force_periods: list[str] | None
         # antrean kirim
         ob = st.folder(OUTBOX)
         kv = {k: (table["m"].get(k) or {}).get("vals", [None] * 5)[1] for k in ("revenue", "total_op_income", "net_profit")}
+        from bot3_narrator import claude_manual as cmn
+        await_until = None
+        if cmn.enabled_for(ticker):
+            from datetime import datetime, timedelta, timezone
+            from core.sysfiles import style_replacements
+            prompt = cmn.build_prompt(ticker, data.get("name", ticker), P, table, facts, title, paras, cat_items,
+                                      list(style_replacements().keys()))
+            pf_ = cfg.WORK_DIR / f"{ticker}_{P.label}.md"
+            pf_.write_text(prompt, encoding="utf-8")
+            st.upload(pf_, st.folder(f"{cfg.FOLDERS['system']}/{cmn.CM.get('prompt_folder', 'untuk_claude')}"), pf_.name, "text/markdown")
+            await_until = (datetime.now(timezone.utc) + timedelta(hours=cmn.CM.get("wait_hours", 4))).isoformat()
+            activity.add(f"{ticker} {P.label}: prompt narasi untuk Claude siap di _Sistem/untuk_claude (menunggu jawaban "
+                         f"maks. {cmn.CM.get('wait_hours', 4)} jam).", "info")
         item = {"ticker": ticker, "period": pk, "title": title, "paragraphs": paras, "footer": footer,
                 "image": img.name, "reason": reason, "q_available": table["q_available"], "status": table["status"],
-                "sig": sig, "key_values": kv}
+                "sig": sig, "key_values": kv, "await_claude_until": await_until,
+                "allowed": sorted({f["text"] for f in facts.items}), "template": table["template"]}
         js = cfg.WORK_DIR / f"{ticker}_{P.label}.json"
         js.write_text(json.dumps(item, ensure_ascii=False, indent=1), encoding="utf-8")
         st.upload(img, ob, img.name)
@@ -172,6 +195,10 @@ def send_outbox() -> int:
         if not imgf:
             activity.add(f"{item['ticker']}: gambar antrean hilang, dilewati", "warn")
             continue
+        if item.get("await_claude_until"):
+            use = _claude_answer(st, item, holds)
+            if use == "wait":
+                continue                         # tetap di antrean; dicek lagi pada putaran berikutnya
         img = cfg.WORK_DIR / item["image"]
         st.download(imgf["id"], img)
         if not discord.report(item["title"], item["paragraphs"], img, [], item["footer"]):
@@ -216,3 +243,35 @@ def send_outbox() -> int:
     if failed_send:
         raise RuntimeError(f"Sebagian laporan gagal dikirim ke Discord: {discord.LAST_ERROR}")
     return n
+
+
+def _claude_answer(st, item, holds):
+    """Pakai jawaban Claude bila sudah ada & lolos cek; tunggu bila belum lewat batas waktu; selain itu narasi otomatis."""
+    from datetime import datetime, timezone
+    from bot3_narrator import claude_manual as cmn
+    label = Period.parse_key(item["period"]).label
+    folder = st.folder(f"{cfg.FOLDERS['system']}/{cmn.CM.get('answer_folder', 'dari_claude')}")
+    ans = next((f for f in st.list(folder) if not f["is_folder"] and f["name"].upper().startswith(f"{item['ticker']}_{label}".upper())), None)
+    expired = datetime.now(timezone.utc) >= datetime.fromisoformat(item["await_claude_until"])
+    if ans:
+        local = cfg.WORK_DIR / f"ans_{ans['name']}"
+        st.download(ans["id"], local)
+        title, paras, cats = cmn.parse_answer(local.read_text(encoding="utf-8"))
+        bad = cmn.check_answer(title, paras, cats, set(item.get("allowed", [])), item.get("template", ""))
+        used = st.folder(f"{cfg.FOLDERS['system']}/{cmn.CM.get('answer_folder', 'dari_claude')}/_terpakai")
+        if not bad:
+            if cats:
+                paras.insert(len(paras) - 1 if len(paras) > 1 else len(paras), "**Potensi katalis positif:**\n" + cats)
+            item["title"], item["paragraphs"] = title, paras
+            item["footer"] = item["footer"] + " | Narasi: Claude"
+            st.move(ans["id"], used, folder)
+            activity.add(f"{item['ticker']} {label}: narasi Claude lolos cek dan dipakai.", "ok")
+            return "use"
+        holds.append({"type": "hold", "ticker": item["ticker"], "period": label,
+                      "reason": "jawaban Claude ditolak: " + "; ".join(bad[:4]),
+                      "fix": "minta Claude memperbaiki sesuai ATURAN WAJIB di file prompt, simpan ulang dengan nama yang sama"})
+        st.move(ans["id"], used, folder, new_name="DITOLAK_" + ans["name"])
+    if not expired:
+        return "wait"
+    activity.add(f"{item['ticker']} {label}: narasi Claude tidak tersedia dalam batas waktu; narasi otomatis dikirim.", "info")
+    return "fallback"

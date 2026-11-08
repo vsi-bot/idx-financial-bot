@@ -217,3 +217,12 @@ Setiap kali kode `DriveBridge.gs` diubah, buat versi deployment baru (Deploy →
 - File baru di `_Sistem`: `struktur.txt`, `makro.txt`, `koreksi.txt`, `usulan_kamus.txt` (dibuat otomatis).
 - Notifikasi: entri yang teratasi pindah ke bagian "SUDAH SELESAI".
 - Pertumbuhan terkendali: `tests/golden_gate.py` + job "Gerbang mutu" (toleransi 1,5%). Bila gagal, semua laporan ditahan.
+
+## Perubahan versi 5 (ringkas)
+
+- Narasi otomatis lebih bervariasi (variasi pembuka, penghubung, dan penutup per emiten).
+- Potensi katalis positif dari RSS Google News (gratis); setiap katalis memuat link sumber dan tanggal.
+- Narasi semi-manual lewat chat Claude untuk emiten prioritas (`claude_manual.tickers` di `config/settings.yaml`):
+  bot menulis prompt ke `_Sistem/untuk_claude/`, Claude (Project + konektor Google Drive) menyimpan jawaban ke
+  `_Sistem/dari_claude/`, bot memeriksa angka & link lalu mengirim. Bila tidak ada jawaban dalam `wait_hours`,
+  narasi otomatis yang dikirim. Instruksi Project: `docs/instruksi_project_claude.md`.

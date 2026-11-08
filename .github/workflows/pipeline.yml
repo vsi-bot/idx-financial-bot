@@ -44,7 +44,7 @@ env:
 
 jobs:
   gate:
-    name: Gerbang mutu (golden set, toleransi 1,5%)
+    name: Gerbang mutu (golden set, toleransi 5%)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
